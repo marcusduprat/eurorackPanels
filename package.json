@@ -1,0 +1,35 @@
+{
+  "name": "eurorack-panel-design",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "npm run build && npm run verify:exports && npm run verify:gerbers",
+    "smoke:history": "playwright test tests/editor-history.spec.ts",
+    "smoke:import": "playwright test tests/gerber-import.spec.ts",
+    "verify:exports": "node -e \"require('fs').mkdirSync('.tmp',{recursive:true})\" && node node_modules/esbuild/bin/esbuild scripts/verify-exporters.ts --bundle --platform=node --format=esm --outfile=.tmp/verify-exporters.mjs && node .tmp/verify-exporters.mjs",
+    "verify:gerbers": "node -e \"require('fs').mkdirSync('.tmp',{recursive:true})\" && node node_modules/esbuild/bin/esbuild scripts/verify-gerbers.ts --bundle --platform=node --format=esm --outfile=.tmp/verify-gerbers.mjs && node .tmp/verify-gerbers.mjs",
+    "verify:gerbers:required": "node -e \"require('fs').mkdirSync('.tmp',{recursive:true})\" && node node_modules/esbuild/bin/esbuild scripts/verify-gerbers.ts --bundle --platform=node --format=esm --outfile=.tmp/verify-gerbers.mjs && node .tmp/verify-gerbers.mjs --require"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "earcut": "^3.0.2",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.555.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "three": "^0.184.0",
+    "vite": "^7.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/earcut": "^3.0.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.184.1",
+    "typescript": "^5.9.3"
+  }
+}

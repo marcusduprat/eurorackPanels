@@ -1,0 +1,35 @@
+node_modules
+dist
+.tmp
+test-results
+playwright-report
+.DS_Store
+*.local
+.env*
+!.env.example
+
+# Local screenshots and generated design exports.
+artifacts
+*.log
+*.zip
+*.stl
+*.dxf
+*.gbr
+*.ger
+*.gtl
+*.gbl
+*.gto
+*.gbo
+*.gko
+*.gm1
+*.drl
+*.xln
+*.kicad_pcb
+*.kicad_sch
+*.kicad_pro
+
+# Real PCB Gerbers can expose board design details. Keep only tiny synthetic fixtures public.
+fixtures/gerbers/*
+!fixtures/gerbers/.gitkeep
+!fixtures/gerbers/sample-*.gbr
+!fixtures/gerbers/sample-*.drl
