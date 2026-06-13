@@ -20,6 +20,42 @@ const cutoutStl = createStl(DEFAULT_PANEL, [
     gerberLayer: "none",
   },
 ]);
+const tracedArtworkItems = [
+  {
+    id: "trace-logo",
+    kind: "artwork" as const,
+    label: "Trace logo",
+    x: 24,
+    y: 28,
+    width: 12,
+    height: 8,
+    rotation: 0,
+    reliefHeight: 0.35,
+    stlMode: "raised" as const,
+    gerberLayer: "frontSilk" as const,
+    filled: true,
+    imageUrl: "data:image/png;base64,trace-fixture",
+    artworkTrace: {
+      sourceWidth: 10,
+      sourceHeight: 10,
+      gridWidth: 4,
+      gridHeight: 4,
+      threshold: 154,
+      mode: "luma" as const,
+      paths: [
+        [
+          { x: -0.25, y: -0.25 },
+          { x: 0.25, y: -0.25 },
+          { x: 0.25, y: 0.25 },
+          { x: -0.25, y: 0.25 },
+        ],
+      ],
+    },
+  },
+];
+const tracedSvg = createSvg(DEFAULT_PANEL, tracedArtworkItems);
+const tracedGerber = createGerberGraphicLayer(DEFAULT_PANEL, tracedArtworkItems, "frontSilk");
+const tracedStl = createStl(DEFAULT_PANEL, tracedArtworkItems);
 
 assert(svg.includes("<svg") && svg.includes("<circle"), "SVG export missing expected geometry");
 assert(dxf.includes("SECTION") && dxf.includes("CIRCLE"), "DXF export missing expected geometry");
@@ -28,6 +64,9 @@ assert(frontSilk.includes("D01*") && parseGerber(frontSilk).length > 0, "Gerber 
 assert(drill.includes("METRIC,TZ") && drill.includes("M30"), "Drill export missing expected format");
 assert(stl.includes("solid eurorack_panel") && stl.includes("facet normal"), "STL export missing expected facets");
 assert(cutoutStl.includes("solid eurorack_panel") && !cutoutStl.includes("NaN"), "STL cutout export produced invalid geometry");
+assert(tracedSvg.includes("<path") && !tracedSvg.includes("<image"), "Traced artwork SVG export should use vectors");
+assert(parseGerber(tracedGerber).length > 0, "Traced artwork Gerber export missing vector strokes");
+assert(tracedStl.includes("facet normal") && !tracedStl.includes("NaN"), "Traced artwork STL export produced invalid geometry");
 
 const parsedGerber = parseGerber(`%FSLAX46Y46*%
 %MOMM*%

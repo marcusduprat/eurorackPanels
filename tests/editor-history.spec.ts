@@ -18,28 +18,37 @@ test("supports undo, redo, and deleting a selected object", async ({ page }) => 
   const objectRows = page.locator(".object-row");
   const initialCount = await objectRows.count();
 
+  await page.locator(".object-row").filter({ hasText: "Title" }).click();
+  await page.keyboard.press("Control+C");
+  await page.keyboard.press("Control+V");
+  await expect.poll(() => objectRows.count()).toBe(initialCount + 1);
+  await expect(page.locator(".statusbar")).toContainText("Selected: Title copy");
+  await page.getByRole("button", { name: "Georgia" }).click();
+  await expect(page.getByRole("button", { name: "Georgia" })).toHaveClass(/active/);
+
+  const countAfterPaste = await objectRows.count();
   await page.getByRole("button", { name: "Hole" }).click();
   const canvasBox = await page.locator(".panel-canvas").boundingBox();
   expect(canvasBox).not.toBeNull();
   await page.mouse.click(canvasBox!.x + canvasBox!.width * 0.57, canvasBox!.y + canvasBox!.height * 0.54);
-  await expect.poll(() => objectRows.count()).toBe(initialCount + 1);
+  await expect.poll(() => objectRows.count()).toBe(countAfterPaste + 1);
   await expect(page.locator(".statusbar")).toContainText("Selected: Hole");
 
   const canvasTools = page.locator(".canvas-tools");
   await canvasTools.getByRole("button", { name: "Undo" }).click();
-  await expect.poll(() => objectRows.count()).toBe(initialCount);
+  await expect.poll(() => objectRows.count()).toBe(countAfterPaste);
 
   await canvasTools.getByRole("button", { name: "Redo" }).click();
-  await expect.poll(() => objectRows.count()).toBe(initialCount + 1);
+  await expect.poll(() => objectRows.count()).toBe(countAfterPaste + 1);
   await expect(page.locator(".statusbar")).toContainText("Selected: Hole");
   await page.getByLabel("Preset").selectOption("5");
   await expect(page.getByLabel("Diameter")).toHaveValue("5");
 
   await page.getByRole("button", { name: "Delete object" }).click();
-  await expect.poll(() => objectRows.count()).toBe(initialCount);
+  await expect.poll(() => objectRows.count()).toBe(countAfterPaste);
 
   await canvasTools.getByRole("button", { name: "Undo" }).click();
-  await expect.poll(() => objectRows.count()).toBe(initialCount + 1);
+  await expect.poll(() => objectRows.count()).toBe(countAfterPaste + 1);
 
   const zoomBefore = await readZoom(page);
   await page.mouse.move(canvasBox!.x + canvasBox!.width * 0.5, canvasBox!.y + canvasBox!.height * 0.5);
@@ -70,6 +79,36 @@ test("supports grouped Gerber dragging and vector object export controls", async
   await page.goto("/");
   await expect(page.getByText("Panel Objects")).toBeVisible();
   await expect(page.locator(".pcb-area-overlay").first()).toBeVisible();
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 24;
+    canvas.height = 16;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("No test canvas context");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#000000";
+    context.fillRect(5, 3, 14, 10);
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => (value ? resolve(value) : reject(new Error("No PNG blob"))), "image/png"));
+    const file = new File([blob], "trace-logo.png", { type: "image/png" });
+    const input = document.querySelector('input[accept*=".png"]') as HTMLInputElement | null;
+    if (!input) throw new Error("No artwork input");
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.locator(".statusbar")).toContainText("Selected: trace-logo");
+  await expect(page.getByText(/Vector trace/)).toBeVisible();
+  await expect(page.locator(".item-view.artwork path").first()).toBeVisible();
+  await page.getByLabel("Trace mode").selectOption("dark");
+  await expect(page.getByLabel("Trace mode")).toHaveValue("dark");
+  await page.getByLabel("Trace detail").selectOption("96");
+  await expect(page.getByLabel("Trace detail")).toHaveValue("96");
+  await page.getByLabel("Trace threshold").fill("180");
+  await expect(page.getByLabel("Trace threshold")).toHaveValue("180");
+  await page.getByRole("button", { name: "Retrace image" }).click();
+  await expect(page.getByText(/Vector trace/)).toBeVisible();
   await page.getByLabel("Front silk color").fill("#8844ff");
   await expect(page.getByLabel("Front silk color")).toHaveValue("#8844ff");
   await page.getByRole("button", { name: "Front silk Copper" }).click();
@@ -79,6 +118,10 @@ test("supports grouped Gerber dragging and vector object export controls", async
   const previewCanvas = page.locator(".three-preview-canvas");
   await expect(previewCanvas).toBeVisible();
   await expect.poll(() => previewCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL("image/png").length)).toBeGreaterThan(1000);
+  const previewBefore = await previewCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL("image/png"));
+  await page.getByRole("button", { name: "Iso" }).click();
+  await expect(page.getByLabel("Preview angle")).toHaveValue("36");
+  await expect.poll(() => previewCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL("image/png"))).not.toBe(previewBefore);
   await page.getByRole("button", { name: "Close" }).click();
   await expect(page.getByRole("dialog", { name: "3D preview" })).toHaveCount(0);
   const cutoutGroup = page.locator(".object-layer-group").filter({ hasText: "Cutouts / none" });

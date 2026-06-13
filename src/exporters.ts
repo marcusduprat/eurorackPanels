@@ -1,4 +1,5 @@
 import earcut from "earcut";
+import { artworkTracePathsForItem, hasArtworkTrace } from "./artworkTrace";
 import type { GerberTargetLayer, PanelItem, PanelSettings } from "./types";
 
 type Hole = {
@@ -297,7 +298,7 @@ export function panelHoles(settings: PanelSettings, items: PanelItem[]): Hole[] 
 export function createSvg(settings: PanelSettings, items: PanelItem[]) {
   const holes = panelHoles(settings, items);
   const artwork = items
-    .filter((item) => item.kind === "artwork" && item.imageUrl)
+    .filter((item) => item.kind === "artwork" && item.imageUrl && !hasArtworkTrace(item))
     .map((item) => {
       const width = item.width ?? 20;
       const height = item.height ?? 20;
@@ -498,7 +499,9 @@ function stlCutoutLoopsForItem(item: PanelItem, settings: PanelSettings): Point2
   const loops: Point2[][] = [];
   const stroke = Math.max(item.strokeWidth ?? DEFAULT_GRAPHIC_STROKE, 0.1);
 
-  if (item.kind === "text" || item.kind === "artwork" || item.kind === "vector-rect") {
+  if (item.kind === "artwork" && hasArtworkTrace(item)) {
+    loops.push(...artworkTraceLoops(item));
+  } else if (item.kind === "text" || item.kind === "artwork" || item.kind === "vector-rect") {
     loops.push(rectLoop(item));
   } else if (item.kind === "vector-circle") {
     loops.push(circleLoop2(item.x, item.y, (item.diameter ?? 8) / 2, 48));
@@ -520,6 +523,11 @@ function stlCutoutLoopsForItem(item: PanelItem, settings: PanelSettings): Point2
 function svgForVectorItem(item: PanelItem) {
   const stroke = item.strokeWidth ?? DEFAULT_GRAPHIC_STROKE;
   const transform = `rotate(${round(item.rotation ?? 0)} ${round(item.x)} ${round(item.y)})`;
+  if (item.kind === "artwork" && hasArtworkTrace(item)) {
+    return artworkTraceLoops(item)
+      .map((loop) => `<path d="${pathD(loop)} Z" fill="#111827" stroke="none" />`)
+      .join("\n  ");
+  }
   if (item.kind === "vector-circle") {
     return `<circle cx="${round(item.x)}" cy="${round(item.y)}" r="${round((item.diameter ?? 8) / 2)}" fill="${item.filled ? "#111827" : "none"}" stroke="#111827" stroke-width="${round(stroke)}" transform="${transform}" />`;
   }
@@ -538,6 +546,11 @@ function svgForVectorItem(item: PanelItem) {
 }
 
 function addDxfVectorItem(entities: string[], item: PanelItem) {
+  if (item.kind === "artwork" && hasArtworkTrace(item)) {
+    for (const loop of artworkTraceLoops(item)) addDxfLoop(entities, loop, true);
+    return;
+  }
+
   if (item.kind === "vector-circle") {
     addDxfCircle(entities, item.x, item.y, (item.diameter ?? 8) / 2);
     return;
@@ -570,6 +583,9 @@ function gerberSegmentsForItem(item: PanelItem): Array<[Point2, Point2]> {
   }
 
   if (item.kind === "artwork") {
+    if (hasArtworkTrace(item)) {
+      return artworkTraceLoops(item).flatMap((loop) => [...fillSegmentsForPolygon(loop), ...loopSegments(loop, true)]);
+    }
     const loop = rectLoop(item);
     return [...(item.filled ? fillSegmentsForPolygon(loop) : []), ...loopSegments(loop, true)];
   }
@@ -631,6 +647,11 @@ function addReliefForItem(facets: string[], item: PanelItem, zBase: number, bloc
   if (reliefHeight <= 0) return;
   const zRaised = zBase + reliefHeight;
   const stroke = Math.max(item.strokeWidth ?? DEFAULT_GRAPHIC_STROKE, 0.1);
+
+  if (item.kind === "artwork" && hasArtworkTrace(item)) {
+    for (const loop of artworkTraceLoops(item)) addRaisedLoop(facets, loop, zBase, zRaised, blockers);
+    return;
+  }
 
   if (item.kind === "text" || item.kind === "artwork") {
     addRaisedLoop(facets, rectLoop(item), zBase, zRaised, blockers);
@@ -794,11 +815,19 @@ function absoluteVectorPoints(item: PanelItem): Point2[] {
   return (item.points ?? []).map((point) => rotateLocal(item, point.x, point.y));
 }
 
+function artworkTraceLoops(item: PanelItem): Point2[][] {
+  return artworkTracePathsForItem(item).map((path) => path.map((point) => [point.x, point.y] as Point2));
+}
+
 function rotateLocal(item: PanelItem, localX: number, localY: number): Point2 {
   const radians = ((item.rotation ?? 0) * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
   return [item.x + localX * cos - localY * sin, item.y + localX * sin + localY * cos];
+}
+
+function pathD(points: Point2[]) {
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${round(point[0])} ${round(point[1])}`).join(" ");
 }
 
 function loopSegments(points: Point2[], closed: boolean): Array<[Point2, Point2]> {

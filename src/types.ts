@@ -9,6 +9,20 @@ export type VectorPoint = {
   y: number;
 };
 
+export type TraceMode = "auto" | "dark" | "light" | "alpha";
+
+export type ArtworkTrace = {
+  sourceWidth: number;
+  sourceHeight: number;
+  gridWidth: number;
+  gridHeight: number;
+  threshold: number;
+  detail?: number;
+  requestedMode?: TraceMode;
+  mode: "alpha" | "luma" | "inverted-luma";
+  paths: VectorPoint[][];
+};
+
 export type PanelItem = {
   id: string;
   kind: PanelItemKind;
@@ -26,6 +40,7 @@ export type PanelItem = {
   fontStyle?: "normal" | "italic";
   imageUrl?: string;
   fileName?: string;
+  artworkTrace?: ArtworkTrace;
   opacity?: number;
   reliefHeight?: number;
   stlMode?: StlGraphicMode;

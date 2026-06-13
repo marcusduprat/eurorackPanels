@@ -3,7 +3,9 @@ import {
   Box,
   ChevronDown,
   ChevronRight,
+  ClipboardPaste,
   Circle,
+  Copy,
   Crosshair,
   Download,
   FileDown,
@@ -31,9 +33,10 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import JSZip from "jszip";
 import * as THREE from "three";
+import { artworkTracePathsForItem, hasArtworkTrace, traceImageToArtwork, type TraceImageOptions } from "./artworkTrace";
 import { DEFAULT_PANEL, LAYER_COLORS, SAMPLE_ITEMS, SAMPLE_LAYERS } from "./defaults";
 import {
   createDrill,
@@ -46,7 +49,7 @@ import {
   panelHoles,
 } from "./exporters";
 import { boundsForPrimitives, parseDxf, parseExcellon, parseGerber } from "./gerber";
-import type { DragState, GerberLayer, GerberPrimitive, GerberTargetLayer, PanelItem, PanelItemKind, PanelSettings, StlGraphicMode, ToolMode } from "./types";
+import type { DragState, GerberLayer, GerberPrimitive, GerberTargetLayer, PanelItem, PanelItemKind, PanelSettings, StlGraphicMode, ToolMode, TraceMode } from "./types";
 
 type Selection = { type: "item" | "layer"; id: string } | null;
 type ViewState = { x: number; y: number; zoom: number };
@@ -62,6 +65,7 @@ type LayerPathBatch = { stroke: number; d: string };
 type LayerPaths = { lineBatches: LayerPathBatch[]; outlinePath: string };
 type Point2D = { x: number; y: number };
 type ThreeCutoutShape = { shape: THREE.Shape; kind: "physical" | "graphic" };
+type PreviewView = { angle: number; tilt: number; zoom: number };
 
 const MIN_ZOOM = 1.4;
 const MAX_ZOOM = 12;
@@ -120,6 +124,20 @@ const stlModeOptions: Array<{ value: StlGraphicMode; label: string }> = [
   { value: "cutout", label: "Cut hole" },
 ];
 
+const traceModeOptions: Array<{ value: TraceMode; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "dark", label: "Dark ink" },
+  { value: "light", label: "Light ink" },
+  { value: "alpha", label: "Transparency" },
+];
+
+const traceDetailOptions = [
+  { value: "64", label: "Draft" },
+  { value: "96", label: "Normal" },
+  { value: "128", label: "Fine" },
+  { value: "192", label: "Extra fine" },
+];
+
 const holePresetOptions = [
   { value: "custom", label: "Custom" },
   { value: "3", label: "LED 3 mm" },
@@ -149,6 +167,7 @@ function App() {
   const [layerColors, setLayerColors] = useState<Record<GerberTargetLayer, string>>(defaultObjectLayerColors);
   const [collapsedObjectLayers, setCollapsedObjectLayers] = useState<GerberTargetLayer[]>([]);
   const [showPreview, setShowPreview] = useState(false);
+  const [copiedItem, setCopiedItem] = useState<PanelItem | null>(null);
   const [canvasSize, setCanvasSize] = useState<Size>({ width: 900, height: 640 });
   const svgRef = useRef<SVGSVGElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -194,6 +213,14 @@ function App() {
       if (modifier && key === "y" && !isEditingText) {
         event.preventDefault();
         redo();
+      }
+      if (modifier && key === "c" && !isEditingText) {
+        event.preventDefault();
+        copySelection();
+      }
+      if (modifier && key === "v" && !isEditingText) {
+        event.preventDefault();
+        pasteCopiedItem();
       }
       if (event.key === "Delete" || event.key === "Backspace") {
         if (isEditingText) return;
@@ -477,6 +504,27 @@ function App() {
     setSelection(null);
   }
 
+  function copySelection() {
+    if (!selectedItem) return;
+    setCopiedItem(clonePanelItem(selectedItem));
+  }
+
+  function pasteCopiedItem() {
+    if (!copiedItem) return;
+    pushHistory();
+    const offset = Math.max(settings.gridMm, 2);
+    const item: PanelItem = {
+      ...clonePanelItem(copiedItem),
+      id: crypto.randomUUID(),
+      label: copyLabel(copiedItem.label),
+      x: snap(clamp(copiedItem.x + offset, 0, settings.widthMm)),
+      y: snap(clamp(copiedItem.y + offset, 0, settings.heightMm)),
+    };
+    setItems((current) => [...current, item]);
+    setSelection({ type: "item", id: item.id });
+    setCopiedItem(clonePanelItem(item));
+  }
+
   function resetProject() {
     pushHistory();
     setSettings(DEFAULT_PANEL);
@@ -755,7 +803,9 @@ function App() {
 
       const dataUrl = await readAsDataUrl(file);
       const id = crypto.randomUUID();
+      const trace = lower.endsWith(".svg") ? null : await traceImageToArtwork(dataUrl).catch(() => null);
       const width = lower.endsWith(".svg") ? 28 : 24;
+      const height = trace ? width * (trace.sourceHeight / trace.sourceWidth) : width;
       const item: PanelItem = {
         id,
         kind: "artwork",
@@ -763,16 +813,42 @@ function App() {
         x: settings.widthMm / 2,
         y: settings.heightMm / 2,
         width,
-        height: width,
+        height,
         rotation: 0,
         imageUrl: dataUrl,
         fileName: file.name,
+        artworkTrace: trace ?? undefined,
+        filled: Boolean(trace),
         opacity: 1,
         ...graphicDefaults(defaultGraphicLayer),
       };
       setItems((current) => [...current, item]);
       setSelection({ type: "item", id });
     }
+  }
+
+  async function retraceArtwork(id: string, options: TraceImageOptions) {
+    const item = items.find((candidate) => candidate.id === id);
+    if (!item || item.kind !== "artwork" || !item.imageUrl || item.imageUrl.startsWith("data:image/svg")) return;
+    const currentTrace = item.artworkTrace;
+    const trace = await traceImageToArtwork(item.imageUrl, {
+      mode: options.mode ?? currentTrace?.requestedMode ?? traceModeFromResult(currentTrace?.mode),
+      threshold: options.threshold ?? currentTrace?.threshold ?? 154,
+      detail: options.detail ?? currentTrace?.detail ?? 128,
+    }).catch(() => null);
+    if (!trace) return;
+    pushHistory();
+    setItems((current) =>
+      current.map((entry) =>
+        entry.id === id
+          ? {
+              ...entry,
+              artworkTrace: trace,
+              filled: true,
+            }
+          : entry,
+      ),
+    );
   }
 
   async function importProject(fileList: FileList | null) {
@@ -1068,6 +1144,8 @@ function App() {
               <IconButton label="Grid snap" onClick={() => updatePanel({ gridMm: settings.gridMm === 2.54 ? 1 : 2.54 })} icon={Grid2X2} text={`${settings.gridMm}`} />
               <IconButton label="Undo" onClick={undo} icon={Undo2} disabled={!canUndo} />
               <IconButton label="Redo" onClick={redo} icon={Redo2} disabled={!canRedo} />
+              <IconButton label="Copy selected" onClick={copySelection} icon={Copy} disabled={!selectedItem} />
+              <IconButton label="Paste object" onClick={pasteCopiedItem} icon={ClipboardPaste} disabled={!copiedItem} />
               <IconButton label="Delete selected" onClick={deleteSelection} icon={Trash2} disabled={!selection} />
               <IconButton label="Reset sample" onClick={resetSample} icon={RefreshCcw} />
               <IconButton label="New panel" onClick={resetProject} icon={Trash2} />
@@ -1159,7 +1237,14 @@ function App() {
 
         <aside className="sidebar right-panel">
           <PanelInspector settings={settings} updatePanel={updatePanel} />
-          {selectedItem && <ItemInspector item={selectedItem} updateItem={(patch) => updateItem(selectedItem.id, patch)} onDelete={deleteSelection} />}
+          {selectedItem && (
+            <ItemInspector
+              item={selectedItem}
+              updateItem={(patch) => updateItem(selectedItem.id, patch)}
+              onTraceChange={(options) => void retraceArtwork(selectedItem.id, options)}
+              onDelete={deleteSelection}
+            />
+          )}
           {selectedLayer && <LayerInspector layer={selectedLayer} updateLayer={(patch) => updateLayer(selectedLayer.id, patch)} onDelete={deleteSelection} />}
           {!selectedItem && !selectedLayer && (
             <PanelBlock title="Selection">
@@ -1217,6 +1302,11 @@ function PanelPreviewDialog({
   layerColors: Record<GerberTargetLayer, string>;
   onClose: () => void;
 }) {
+  const [view, setView] = useState<PreviewView>({ angle: 0, tilt: 24, zoom: 1 });
+  const resetView = () => setView({ angle: 0, tilt: 24, zoom: 1 });
+  const setTopView = () => setView({ angle: 0, tilt: 0, zoom: 1.08 });
+  const setIsoView = () => setView({ angle: 36, tilt: 42, zoom: 0.96 });
+
   return (
     <div className="preview-backdrop" role="dialog" aria-modal="true" aria-label="3D preview" onPointerDown={onClose}>
       <section className="preview-dialog" onPointerDown={(event) => event.stopPropagation()}>
@@ -1231,8 +1321,58 @@ function PanelPreviewDialog({
             Close
           </button>
         </div>
+        <div className="preview-controls">
+          <button type="button" onClick={setTopView}>
+            Top
+          </button>
+          <button type="button" onClick={setIsoView}>
+            Iso
+          </button>
+          <button type="button" onClick={resetView}>
+            Reset
+          </button>
+          <label>
+            <span>Angle</span>
+            <input
+              aria-label="Preview angle"
+              type="range"
+              min="-180"
+              max="180"
+              step="1"
+              value={view.angle}
+              onChange={(event) => setView((current) => ({ ...current, angle: Number(event.target.value) }))}
+            />
+            <output>{Math.round(view.angle)} deg</output>
+          </label>
+          <label>
+            <span>Tilt</span>
+            <input
+              aria-label="Preview tilt"
+              type="range"
+              min="0"
+              max="68"
+              step="1"
+              value={view.tilt}
+              onChange={(event) => setView((current) => ({ ...current, tilt: Number(event.target.value) }))}
+            />
+            <output>{Math.round(view.tilt)} deg</output>
+          </label>
+          <label>
+            <span>Zoom</span>
+            <input
+              aria-label="Preview zoom"
+              type="range"
+              min="0.7"
+              max="1.6"
+              step="0.02"
+              value={view.zoom}
+              onChange={(event) => setView((current) => ({ ...current, zoom: Number(event.target.value) }))}
+            />
+            <output>{view.zoom.toFixed(2)}x</output>
+          </label>
+        </div>
         <div className="preview-scene">
-          <PanelThreePreview settings={settings} items={items} layerColors={layerColors} />
+          <PanelThreePreview settings={settings} items={items} layerColors={layerColors} view={view} onViewChange={setView} />
         </div>
       </section>
     </div>
@@ -1243,12 +1383,26 @@ function PanelThreePreview({
   settings,
   items,
   layerColors,
+  view,
+  onViewChange,
 }: {
   settings: PanelSettings;
   items: PanelItem[];
   layerColors: Record<GerberTargetLayer, string>;
+  view: PreviewView;
+  onViewChange: Dispatch<SetStateAction<PreviewView>>;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const viewRef = useRef(view);
+  const renderRef = useRef<(() => void) | null>(null);
+  const dragRef = useRef<{ x: number; y: number } | null>(null);
+
+  viewRef.current = view;
+
+  useEffect(() => {
+    viewRef.current = view;
+    renderRef.current?.();
+  }, [view]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1260,12 +1414,18 @@ function PanelThreePreview({
     renderer.shadowMap.enabled = true;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 1200);
+    const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 2000);
     const group = new THREE.Group();
-    group.position.set(-settings.widthMm / 2, -settings.heightMm / 2, -settings.thicknessMm / 2);
+    group.position.set(-settings.widthMm / 2, settings.heightMm / 2, -settings.thicknessMm / 2);
+    group.scale.set(1, -1, 1);
     scene.add(group);
 
-    const panelShape = createPanelThreeShape(settings, items);
+    const cutouts = threeCutoutShapes(settings, items);
+    const maxRelief = Math.max(
+      0.08,
+      ...items.filter((item) => isGraphicItem(item) && item.stlMode !== "cutout").map((item) => Math.max(item.reliefHeight ?? 0.4, 0.04)),
+    );
+    const panelShape = createPanelThreeShape(settings, cutouts);
     const panelGeometry = new THREE.ExtrudeGeometry(panelShape, {
       depth: settings.thicknessMm,
       bevelEnabled: true,
@@ -1279,6 +1439,18 @@ function PanelThreePreview({
     panelMesh.castShadow = true;
     panelMesh.receiveShadow = true;
     group.add(panelMesh);
+    addThreeLine(
+      group,
+      [
+        { x: 0, y: 0 },
+        { x: settings.widthMm, y: 0 },
+        { x: settings.widthMm, y: settings.heightMm },
+        { x: 0, y: settings.heightMm },
+      ],
+      "#64748b",
+      settings.thicknessMm + 0.1,
+      true,
+    );
 
     if (settings.showPcbArea !== false) {
       const area = pcbArea(settings);
@@ -1301,14 +1473,12 @@ function PanelThreePreview({
     }
 
     for (const item of items.filter((entry) => isGraphicItem(entry) && entry.stlMode !== "cutout")) {
-      addThreeGraphic(group, item, layerColors, settings.thicknessMm);
+      addThreeGraphic(group, item, layerColors, settings.thicknessMm, cutouts);
     }
 
-    for (const cutout of threeCutoutShapes(settings, items)) {
-      const darkMesh = new THREE.Mesh(new THREE.ShapeGeometry(cutout.shape), new THREE.MeshBasicMaterial({ color: "#111827", transparent: true, opacity: 0.92, side: THREE.DoubleSide }));
-      darkMesh.position.z = settings.thicknessMm + 0.055;
-      group.add(darkMesh);
-      if (cutout.kind === "graphic") addThreeCutoutCue(group, cutout.shape, settings.thicknessMm + 0.09);
+    for (const cutout of cutouts) {
+      addThreeCutoutDepth(group, cutout, settings.thicknessMm, maxRelief);
+      if (cutout.kind === "graphic") addThreeCutoutCue(group, cutout.shape, settings.thicknessMm + maxRelief + 0.12);
     }
 
     const hemi = new THREE.HemisphereLight("#ffffff", "#aab4c2", 2.6);
@@ -1328,23 +1498,33 @@ function PanelThreePreview({
       const width = Math.max(targetCanvas.clientWidth, 320);
       const height = Math.max(targetCanvas.clientHeight, 320);
       renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.position.set(settings.widthMm * 0.85, -settings.heightMm * 0.95, settings.heightMm * 0.62);
+      const preview = viewRef.current;
+      const aspect = width / height;
+      const fitSpan = Math.max(settings.heightMm, settings.widthMm / aspect) * 1.2;
+      const distance = fitSpan / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * preview.zoom);
+      camera.aspect = aspect;
+      const tilt = THREE.MathUtils.degToRad(clamp(preview.tilt, 0, 72));
+      const angle = THREE.MathUtils.degToRad(preview.angle);
+      const planarDistance = Math.sin(tilt) * distance;
+      camera.position.set(Math.sin(angle) * planarDistance, -Math.cos(angle) * planarDistance, Math.cos(tilt) * distance + settings.thicknessMm * 2);
+      camera.up.set(0, 1, 0);
       camera.lookAt(center);
       camera.updateProjectionMatrix();
       renderer.render(scene, camera);
     }
 
     render();
+    renderRef.current = render;
     const observer = new ResizeObserver(render);
     observer.observe(targetCanvas);
 
     return () => {
       observer.disconnect();
+      renderRef.current = null;
       panelGeometry.dispose();
       renderer.dispose();
       scene.traverse((object: THREE.Object3D) => {
-        if (object instanceof THREE.Mesh) {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Line || object instanceof THREE.LineSegments) {
           object.geometry.dispose();
           if (Array.isArray(object.material)) {
             object.material.forEach(disposeThreeMaterial);
@@ -1356,7 +1536,38 @@ function PanelThreePreview({
     };
   }, [settings, items, layerColors]);
 
-  return <canvas ref={canvasRef} className="three-preview-canvas" aria-label="3D panel render" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className="three-preview-canvas"
+      aria-label="3D panel render"
+      onPointerDown={(event) => {
+        dragRef.current = { x: event.clientX, y: event.clientY };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        if (!dragRef.current) return;
+        const dx = event.clientX - dragRef.current.x;
+        const dy = event.clientY - dragRef.current.y;
+        dragRef.current = { x: event.clientX, y: event.clientY };
+        onViewChange((current) => ({
+          ...current,
+          angle: wrapAngle(current.angle + dx * 0.45),
+          tilt: clamp(current.tilt - dy * 0.28, 0, 68),
+        }));
+      }}
+      onPointerUp={() => {
+        dragRef.current = null;
+      }}
+      onPointerLeave={() => {
+        dragRef.current = null;
+      }}
+      onWheel={(event) => {
+        event.preventDefault();
+        onViewChange((current) => ({ ...current, zoom: clamp(current.zoom + (event.deltaY < 0 ? 0.08 : -0.08), 0.7, 1.6) }));
+      }}
+    />
+  );
 }
 
 function PcbAreaOverlay({ settings }: { settings: PanelSettings }) {
@@ -1382,12 +1593,26 @@ function PcbAreaOverlay({ settings }: { settings: PanelSettings }) {
 function ItemInspector({
   item,
   updateItem,
+  onTraceChange,
   onDelete,
 }: {
   item: PanelItem;
   updateItem: (patch: Partial<PanelItem>) => void;
+  onTraceChange?: (options: TraceImageOptions) => void;
   onDelete: () => void;
 }) {
+  const traceableArtwork = item.kind === "artwork" && Boolean(item.imageUrl) && !item.imageUrl?.startsWith("data:image/svg");
+  const traceMode = item.artworkTrace?.requestedMode ?? traceModeFromResult(item.artworkTrace?.mode);
+  const traceThreshold = item.artworkTrace?.threshold ?? 154;
+  const traceDetail = item.artworkTrace?.detail ?? 128;
+  const applyTraceOptions = (patch: TraceImageOptions = {}) =>
+    onTraceChange?.({
+      mode: traceMode,
+      threshold: traceThreshold,
+      detail: traceDetail,
+      ...patch,
+    });
+
   return (
     <PanelBlock title="Object">
       <TextField label="Name" value={item.label} onChange={(label) => updateItem({ label })} />
@@ -1416,12 +1641,7 @@ function ItemInspector({
       {item.kind === "text" && (
         <>
           <TextField label="Text" value={item.text ?? ""} onChange={(text) => updateItem({ text })} />
-          <SelectField
-            label="Font"
-            value={item.fontFamily ?? fontOptions[0].value}
-            options={fontOptions}
-            onChange={(fontFamily) => updateItem({ fontFamily })}
-          />
+          <FontPicker value={item.fontFamily ?? fontOptions[0].value} onChange={(fontFamily) => updateItem({ fontFamily })} />
           <NumberField label="Size" value={item.fontSize ?? 4} step={0.1} min={0.4} onChange={(fontSize) => updateItem({ fontSize })} suffix="mm" />
           <NumberField label="Rotate" value={item.rotation ?? 0} step={1} onChange={(rotation) => updateItem({ rotation })} suffix="deg" />
           <label className="toggle-row">
@@ -1440,6 +1660,23 @@ function ItemInspector({
           <NumberField label="Height" value={item.height ?? 20} step={0.1} min={0.1} onChange={(height) => updateItem({ height })} suffix="mm" />
           <NumberField label="Rotate" value={item.rotation ?? 0} step={1} onChange={(rotation) => updateItem({ rotation })} suffix="deg" />
           <NumberField label="Opacity" value={item.opacity ?? 1} step={0.05} min={0.05} max={1} onChange={(opacity) => updateItem({ opacity })} />
+          {traceableArtwork && (
+            <>
+              <SelectField label="Trace mode" value={traceMode} options={traceModeOptions} onChange={(mode) => applyTraceOptions({ mode: mode as TraceMode })} />
+              <NumberField label="Trace threshold" value={traceThreshold} step={1} min={0} max={255} onChange={(threshold) => applyTraceOptions({ threshold })} />
+              <SelectField label="Trace detail" value={String(traceDetail)} options={traceDetailOptions} onChange={(detail) => applyTraceOptions({ detail: Number(detail) })} />
+              <button type="button" className="secondary-action" onClick={() => applyTraceOptions()}>
+                <RefreshCcw size={14} />
+                Retrace image
+              </button>
+            </>
+          )}
+          {hasArtworkTrace(item) && (
+            <div className="trace-summary">
+              Vector trace - {item.artworkTrace!.paths.length} shapes - {traceModeLabel(traceMode)} - {item.artworkTrace!.gridWidth}x{item.artworkTrace!.gridHeight}
+            </div>
+          )}
+          {traceableArtwork && !hasArtworkTrace(item) && <div className="trace-summary muted">No vector trace yet</div>}
         </>
       )}
       {item.kind === "vector-circle" && (
@@ -1636,6 +1873,28 @@ function SelectField({
   );
 }
 
+function FontPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="field-row font-picker-row">
+      <span>Font</span>
+      <div className="font-picker" role="radiogroup" aria-label="Font">
+        {fontOptions.map((option) => (
+          <button
+            type="button"
+            key={option.value}
+            className={value === option.value ? "active" : ""}
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+            style={{ fontFamily: option.value }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function IconButton({
   label,
   onClick,
@@ -1755,26 +2014,36 @@ function ItemView({
   if (item.kind === "artwork") {
     const width = item.width ?? 20;
     const height = item.height ?? 20;
+    const tracePaths = hasArtworkTrace(item) ? item.artworkTrace.paths : [];
     return (
-      <g className={`item-view artwork ${selected ? "selected" : ""}`} onPointerDown={onPointerDown} transform={transform}>
-        {item.imageUrl ? (
-          <image href={item.imageUrl} x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} opacity={item.opacity ?? 1} />
-        ) : (
-          <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill={color} fillOpacity="0.16" stroke={color} strokeWidth="0.18" />
-        )}
-        <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill="none" stroke={selected ? "#e58614" : color} strokeWidth="0.22" strokeDasharray="1 0.8" />
-        <CutoutCue item={item} color={color} />
-        {selected && (
-          <rect
-            className="resize-handle"
-            x={item.x + width / 2 - 0.9}
-            y={item.y + height / 2 - 0.9}
-            width="1.8"
-            height="1.8"
-            rx="0.2"
-            fill="#e58614"
-            onPointerDown={(event) => onResizePointerDown(event, item)}
-          />
+      <g className={`item-view artwork ${selected ? "selected" : ""}`} onPointerDown={onPointerDown}>
+        <g transform={transform}>
+          {tracePaths.length ? (
+            tracePaths.map((path, index) => (
+              <path key={index} d={localTracePathD(item, path)} fill={color} fillOpacity={item.opacity ?? 1} stroke="none" />
+            ))
+          ) : item.imageUrl ? (
+            <image href={item.imageUrl} x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} opacity={item.opacity ?? 1} />
+          ) : (
+            <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill={color} fillOpacity="0.16" stroke={color} strokeWidth="0.18" />
+          )}
+          <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill="none" stroke={selected ? "#e58614" : color} strokeWidth="0.22" strokeDasharray="1 0.8" />
+          <CutoutCue item={item} color={color} />
+          {selected && (
+            <rect
+              className="resize-handle"
+              x={item.x + width / 2 - 0.9}
+              y={item.y + height / 2 - 0.9}
+              width="1.8"
+              height="1.8"
+              rx="0.2"
+              fill="#e58614"
+              onPointerDown={(event) => onResizePointerDown(event, item)}
+            />
+          )}
+        </g>
+        {tracePaths.length > 0 && (
+          <image className="trace-reference-image" href={item.imageUrl} x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} opacity="0" transform={transform} />
         )}
       </g>
     );
@@ -2051,6 +2320,12 @@ function readableCueColor(color: string) {
   return r * 0.299 + g * 0.587 + b * 0.114 > 148 ? "#111827" : "#f8fafc";
 }
 
+function localTracePathD(item: PanelItem, path: Point2D[]) {
+  const width = item.width ?? 20;
+  const height = item.height ?? width;
+  return `${path.map((point, index) => `${index === 0 ? "M" : "L"} ${item.x + point.x * width} ${item.y + point.y * height}`).join(" ")} Z`;
+}
+
 function holePresetValue(diameter: number) {
   const match = holePresetOptions.find((option) => option.value !== "custom" && Math.abs(Number(option.value) - diameter) < 0.01);
   return match?.value ?? "custom";
@@ -2067,14 +2342,14 @@ function pcbArea(settings: PanelSettings) {
   };
 }
 
-function createPanelThreeShape(settings: PanelSettings, items: PanelItem[]) {
+function createPanelThreeShape(settings: PanelSettings, cutouts: ThreeCutoutShape[]) {
   const shape = new THREE.Shape();
   shape.moveTo(0, 0);
   shape.lineTo(settings.widthMm, 0);
   shape.lineTo(settings.widthMm, settings.heightMm);
   shape.lineTo(0, settings.heightMm);
   shape.lineTo(0, 0);
-  shape.holes.push(...threeCutoutShapes(settings, items).map((cutout) => cutout.shape));
+  shape.holes.push(...cutouts.map((cutout) => cutout.shape));
   return shape;
 }
 
@@ -2087,6 +2362,7 @@ function threeCutoutShapes(settings: PanelSettings, items: PanelItem[]): ThreeCu
   const graphics = items.flatMap((item): ThreeCutoutShape[] => {
     if (item.stlMode !== "cutout") return [];
     if (item.kind === "vector-circle") return [{ shape: circleThreeShape(item.x, item.y, (item.diameter ?? 8) / 2, true), kind: "graphic" }];
+    if (item.kind === "artwork" && hasArtworkTrace(item)) return artworkTracePathsForItem(item).map((path) => ({ shape: shapeFromPoints(path, true), kind: "graphic" }));
     if (item.kind === "text" || item.kind === "artwork" || item.kind === "vector-rect") return [{ shape: shapeFromPoints(rectPointsForItem(item), true), kind: "graphic" }];
     if (item.kind === "vector-line" || item.kind === "vector-path") {
       const points = absoluteVectorPointsForApp(item);
@@ -2102,7 +2378,7 @@ function threeCutoutShapes(settings: PanelSettings, items: PanelItem[]): ThreeCu
   return [...physical, ...graphics];
 }
 
-function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Record<GerberTargetLayer, string>, zTop: number) {
+function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Record<GerberTargetLayer, string>, zTop: number, cutouts: ThreeCutoutShape[]) {
   const color = itemDisplayColor(item, layerColors);
   const relief = Math.max(item.reliefHeight ?? 0.4, 0.04);
   const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: item.gerberLayer?.includes("Copper") ? 0.35 : 0.05 });
@@ -2113,20 +2389,26 @@ function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Recor
   }
 
   if (item.kind === "artwork") {
-    addThreeRaisedShape(group, shapeFromPoints(rectPointsForItem(item), false), material, zTop, relief);
+    if (hasArtworkTrace(item)) {
+      for (const path of artworkTracePathsForItem(item)) {
+        addThreeRaisedShape(group, shapeFromPoints(path, false), material, zTop, relief, cutouts);
+      }
+      return;
+    }
+    addThreeRaisedShape(group, shapeFromPoints(rectPointsForItem(item), false), material, zTop, relief, cutouts);
     return;
   }
 
   if (item.kind === "vector-circle") {
     const shape = circleThreeShape(item.x, item.y, (item.diameter ?? 8) / 2, false);
-    if (item.filled) addThreeRaisedShape(group, shape, material, zTop, relief);
+    if (item.filled) addThreeRaisedShape(group, shape, material, zTop, relief, cutouts);
     else addThreeLine(group, circlePoints(item.x, item.y, (item.diameter ?? 8) / 2, 64), color, zTop + relief + 0.08, true);
     return;
   }
 
   if (item.kind === "vector-rect") {
     const points = rectPointsForItem(item);
-    if (item.filled) addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief);
+    if (item.filled) addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief, cutouts);
     else addThreeLine(group, points, color, zTop + relief + 0.08, true);
     return;
   }
@@ -2134,15 +2416,16 @@ function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Recor
   if (item.kind === "vector-line" || item.kind === "vector-path") {
     const points = absoluteVectorPointsForApp(item);
     if (item.kind === "vector-path" && item.closed && item.filled && points.length > 2) {
-      addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief);
+      addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief, cutouts);
     } else {
       addThreeLine(group, points, color, zTop + relief + 0.08, item.closed ?? false);
     }
   }
 }
 
-function addThreeRaisedShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, zTop: number, relief: number) {
-  const geometry = new THREE.ExtrudeGeometry(shape, {
+function addThreeRaisedShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, zTop: number, relief: number, cutouts: ThreeCutoutShape[]) {
+  const raisedShape = shapeWithNestedCutouts(shape, cutouts);
+  const geometry = new THREE.ExtrudeGeometry(raisedShape, {
     depth: relief,
     bevelEnabled: false,
     curveSegments: 32,
@@ -2151,6 +2434,25 @@ function addThreeRaisedShape(group: THREE.Group, shape: THREE.Shape, material: T
   mesh.position.z = zTop + 0.04;
   mesh.castShadow = true;
   group.add(mesh);
+}
+
+function addThreeCutoutDepth(group: THREE.Group, cutout: ThreeCutoutShape, panelThickness: number, maxRelief: number) {
+  const shadowGeometry = new THREE.ShapeGeometry(cutout.shape);
+  const shadowMaterial = new THREE.MeshBasicMaterial({ color: "#0f172a", transparent: true, opacity: cutout.kind === "physical" ? 0.16 : 0.22, side: THREE.DoubleSide, depthWrite: false });
+  const shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
+  shadow.position.z = -0.08;
+  group.add(shadow);
+
+  addThreeShapeOutline(group, cutout.shape, "#0f172a", panelThickness + maxRelief + 0.14, 0.74);
+  addThreeShapeOutline(group, cutout.shape, "#f8fafc", -0.06, 0.32);
+}
+
+function addThreeShapeOutline(group: THREE.Group, shape: THREE.Shape, color: string, z: number, opacity: number) {
+  const points = shape.getPoints(72);
+  if (points.length < 2) return;
+  const linePoints = [...points, points[0]].map((point) => new THREE.Vector3(point.x, point.y, z));
+  const geometry = new THREE.BufferGeometry().setFromPoints(linePoints);
+  group.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity })));
 }
 
 function addThreeText(group: THREE.Group, item: PanelItem, color: string, z: number) {
@@ -2174,6 +2476,7 @@ function addThreeText(group: THREE.Group, item: PanelItem, color: string, z: num
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, fontSize * 1.35), material);
   mesh.position.set(item.x, item.y, z);
   mesh.rotation.z = ((item.rotation ?? 0) * Math.PI) / 180;
+  mesh.scale.y = -1;
   group.add(mesh);
 }
 
@@ -2217,6 +2520,54 @@ function shapeFromPoints(points: Point2D[], clockwise: boolean) {
   ordered.slice(1).forEach((point) => shape.lineTo(point.x, point.y));
   shape.lineTo(ordered[0].x, ordered[0].y);
   return shape;
+}
+
+function shapeWithNestedCutouts(shape: THREE.Shape, cutouts: ThreeCutoutShape[]) {
+  const raisedShape = shape.clone();
+  const shapePoints = shape.getPoints(36).map((point) => ({ x: point.x, y: point.y }));
+  const shapeBounds = boundsForPoints(shapePoints);
+  if (!shapeBounds || shapePoints.length < 3) return raisedShape;
+
+  for (const cutout of cutouts) {
+    const cutoutPoints = cutout.shape.getPoints(36).map((point) => ({ x: point.x, y: point.y }));
+    const cutoutBounds = boundsForPoints(cutoutPoints);
+    if (!cutoutBounds || !boundsOverlap(shapeBounds, cutoutBounds)) continue;
+    if (pointInsidePolygonForApp(centerForBounds(cutoutBounds), shapePoints)) {
+      raisedShape.holes.push(cutout.shape.clone());
+    }
+  }
+
+  return raisedShape;
+}
+
+function boundsForPoints(points: Point2D[]) {
+  if (!points.length) return null;
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    maxY: Math.max(...points.map((point) => point.y)),
+  };
+}
+
+function centerForBounds(bounds: NonNullable<ReturnType<typeof boundsForPoints>>): Point2D {
+  return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+}
+
+function boundsOverlap(a: NonNullable<ReturnType<typeof boundsForPoints>>, b: NonNullable<ReturnType<typeof boundsForPoints>>) {
+  return a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
+}
+
+function pointInsidePolygonForApp(point: Point2D, polygon: Point2D[]) {
+  let inside = false;
+  for (let index = 0, previousIndex = polygon.length - 1; index < polygon.length; previousIndex = index++) {
+    const current = polygon[index];
+    const previous = polygon[previousIndex];
+    const crosses = current.y > point.y !== previous.y > point.y;
+    const intersectX = ((previous.x - current.x) * (point.y - current.y)) / (previous.y - current.y || 0.000001) + current.x;
+    if (crosses && point.x < intersectX) inside = !inside;
+  }
+  return inside;
 }
 
 function rectPointsForItem(item: PanelItem): Point2D[] {
@@ -2278,6 +2629,40 @@ function polygonAreaForApp(points: Point2D[]) {
     area += current.x * next.y - next.x * current.y;
   }
   return area / 2;
+}
+
+function wrapAngle(angle: number) {
+  if (angle > 180) return angle - 360;
+  if (angle < -180) return angle + 360;
+  return angle;
+}
+
+function traceModeFromResult(mode?: "alpha" | "luma" | "inverted-luma"): TraceMode {
+  if (mode === "alpha") return "alpha";
+  if (mode === "inverted-luma") return "light";
+  if (mode === "luma") return "dark";
+  return "auto";
+}
+
+function traceModeLabel(mode: TraceMode) {
+  return traceModeOptions.find((option) => option.value === mode)?.label ?? "Auto";
+}
+
+function clonePanelItem(item: PanelItem): PanelItem {
+  return {
+    ...item,
+    points: item.points?.map((point) => ({ ...point })),
+    artworkTrace: item.artworkTrace
+      ? {
+          ...item.artworkTrace,
+          paths: item.artworkTrace.paths.map((path) => path.map((point) => ({ ...point }))),
+        }
+      : undefined,
+  };
+}
+
+function copyLabel(label: string) {
+  return /\bcopy\b/i.test(label) ? label : `${label} copy`;
 }
 
 function disposeThreeMaterial(material: THREE.Material) {
