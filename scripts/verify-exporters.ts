@@ -8,6 +8,7 @@ const gerber = createGerberOutline(DEFAULT_PANEL);
 const frontSilk = createGerberGraphicLayer(DEFAULT_PANEL, SAMPLE_ITEMS, "frontSilk");
 const drill = createDrill(DEFAULT_PANEL, SAMPLE_ITEMS);
 const stl = createStl(DEFAULT_PANEL, SAMPLE_ITEMS);
+const barePanelStl = createStl(DEFAULT_PANEL, []);
 const cutoutStl = createStl(DEFAULT_PANEL, [
   {
     id: "led-cutout",
@@ -20,6 +21,24 @@ const cutoutStl = createStl(DEFAULT_PANEL, [
     gerberLayer: "none",
   },
 ]);
+const revealItems = [
+  {
+    id: "pcb-reveal",
+    kind: "vector-rect" as const,
+    label: "PCB reveal",
+    x: 18,
+    y: 30,
+    width: 10,
+    height: 8,
+    filled: true,
+    stlMode: "reveal" as const,
+    gerberLayer: "frontMask" as const,
+  },
+];
+const revealStl = createStl(DEFAULT_PANEL, revealItems);
+const revealFrontBase = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "frontMask");
+const revealFrontCopper = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "frontCopper");
+const revealFrontSilk = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "frontSilk");
 const tracedArtworkItems = [
   {
     id: "trace-logo",
@@ -64,6 +83,9 @@ assert(frontSilk.includes("D01*") && parseGerber(frontSilk).length > 0, "Gerber 
 assert(drill.includes("METRIC,TZ") && drill.includes("M30"), "Drill export missing expected format");
 assert(stl.includes("solid eurorack_panel") && stl.includes("facet normal"), "STL export missing expected facets");
 assert(cutoutStl.includes("solid eurorack_panel") && !cutoutStl.includes("NaN"), "STL cutout export produced invalid geometry");
+assert(revealStl === barePanelStl, "PCB reveal should not cut or raise STL geometry");
+assert(!revealFrontBase.includes("%LPC*%"), "PCB reveal should not clear the base PCB layer");
+assert(revealFrontCopper.includes("%LPC*%") && revealFrontSilk.includes("%LPC*%"), "PCB reveal should clear front copper and silk layers");
 assert(tracedSvg.includes("<path") && !tracedSvg.includes("<image"), "Traced artwork SVG export should use vectors");
 assert(parseGerber(tracedGerber).length > 0, "Traced artwork Gerber export missing vector strokes");
 assert(tracedStl.includes("facet normal") && !tracedStl.includes("NaN"), "Traced artwork STL export produced invalid geometry");

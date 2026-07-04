@@ -121,6 +121,7 @@ const materialPalette = [
 
 const stlModeOptions: Array<{ value: StlGraphicMode; label: string }> = [
   { value: "raised", label: "Raised" },
+  { value: "reveal", label: "PCB reveal" },
   { value: "cutout", label: "Cut hole" },
 ];
 
@@ -1423,7 +1424,7 @@ function PanelThreePreview({
     const cutouts = threeCutoutShapes(settings, items);
     const maxRelief = Math.max(
       0.08,
-      ...items.filter((item) => isGraphicItem(item) && item.stlMode !== "cutout").map((item) => Math.max(item.reliefHeight ?? 0.4, 0.04)),
+      ...items.filter((item) => isGraphicItem(item) && (item.stlMode ?? "raised") === "raised").map((item) => Math.max(item.reliefHeight ?? 0.4, 0.04)),
     );
     const panelShape = createPanelThreeShape(settings, cutouts);
     const panelGeometry = new THREE.ExtrudeGeometry(panelShape, {
@@ -1728,7 +1729,7 @@ function ItemInspector({
             onChange={(stlMode) =>
               updateItem({
                 stlMode: stlMode as StlGraphicMode,
-                gerberLayer: stlMode === "cutout" ? "none" : item.gerberLayer === "none" ? "frontSilk" : item.gerberLayer,
+                gerberLayer: gerberLayerForGraphicMode(stlMode as StlGraphicMode, item.gerberLayer),
               })
             }
           />
@@ -2262,6 +2263,12 @@ function labelForKind(kind: PanelItemKind) {
   return "Artwork";
 }
 
+function gerberLayerForGraphicMode(mode: StlGraphicMode, current?: GerberTargetLayer): GerberTargetLayer {
+  if (mode === "cutout") return "none";
+  if (mode === "reveal") return current === "backMask" ? "backMask" : "frontMask";
+  return !current || current === "none" || current === "frontMask" || current === "backMask" ? "frontSilk" : current;
+}
+
 function graphicDefaults(gerberLayer: GerberTargetLayer = "frontSilk"): Pick<PanelItem, "gerberLayer" | "reliefHeight" | "stlMode"> {
   return { gerberLayer, reliefHeight: 0.4, stlMode: "raised" };
 }
@@ -2272,11 +2279,13 @@ function isGraphicItem(item: PanelItem) {
 
 function objectListLayer(item: PanelItem): GerberTargetLayer {
   if (item.stlMode === "cutout") return "none";
+  if (item.stlMode === "reveal") return item.gerberLayer && item.gerberLayer !== "none" ? item.gerberLayer : "frontMask";
   return isGraphicItem(item) ? (item.gerberLayer ?? "frontSilk") : "none";
 }
 
 function itemDisplayColor(item: PanelItem, layerColors: Record<GerberTargetLayer, string>) {
   if (item.stlMode === "cutout" || !isGraphicItem(item)) return layerColors.none;
+  if (item.stlMode === "reveal") return layerColors[item.gerberLayer && item.gerberLayer !== "none" ? item.gerberLayer : "frontMask"];
   return layerColors[item.gerberLayer ?? "frontSilk"];
 }
 
@@ -2380,6 +2389,10 @@ function threeCutoutShapes(settings: PanelSettings, items: PanelItem[]): ThreeCu
 
 function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Record<GerberTargetLayer, string>, zTop: number, cutouts: ThreeCutoutShape[]) {
   const color = itemDisplayColor(item, layerColors);
+  if (item.stlMode === "reveal") {
+    addThreeRevealGraphic(group, item, color, zTop);
+    return;
+  }
   const relief = Math.max(item.reliefHeight ?? 0.4, 0.04);
   const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: item.gerberLayer?.includes("Copper") ? 0.35 : 0.05 });
 
@@ -2423,6 +2436,52 @@ function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Recor
   }
 }
 
+function addThreeRevealGraphic(group: THREE.Group, item: PanelItem, color: string, zTop: number) {
+  const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
+  const z = zTop + 0.07;
+
+  if (item.kind === "text") {
+    addThreeText(group, item, color, z + 0.02);
+    return;
+  }
+
+  if (item.kind === "artwork") {
+    if (hasArtworkTrace(item)) {
+      for (const path of artworkTracePathsForItem(item)) addThreeFlatShape(group, shapeFromPoints(path, false), material, z);
+      return;
+    }
+    addThreeFlatShape(group, shapeFromPoints(rectPointsForItem(item), false), material, z);
+    return;
+  }
+
+  if (item.kind === "vector-circle") {
+    const radius = (item.diameter ?? 8) / 2;
+    if (item.filled) addThreeFlatShape(group, circleThreeShape(item.x, item.y, radius, false), material, z);
+    else addThreeLine(group, circlePoints(item.x, item.y, radius, 64), color, z + 0.02, true);
+    return;
+  }
+
+  if (item.kind === "vector-rect") {
+    const points = rectPointsForItem(item);
+    if (item.filled) addThreeFlatShape(group, shapeFromPoints(points, false), material, z);
+    else addThreeLine(group, points, color, z + 0.02, true);
+    return;
+  }
+
+  if (item.kind === "vector-line" || item.kind === "vector-path") {
+    const points = absoluteVectorPointsForApp(item);
+    if (item.kind === "vector-path" && item.closed && item.filled && points.length > 2) addThreeFlatShape(group, shapeFromPoints(points, false), material, z);
+    else addThreeLine(group, points, color, z + 0.02, item.closed ?? false);
+  }
+}
+
+function addThreeFlatShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, z: number) {
+  const geometry = new THREE.ShapeGeometry(shape);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.z = z;
+  group.add(mesh);
+  addThreeShapeOutline(group, shape, "#0f172a", z + 0.01, 0.16);
+}
 function addThreeRaisedShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, zTop: number, relief: number, cutouts: ThreeCutoutShape[]) {
   const raisedShape = shapeWithNestedCutouts(shape, cutouts);
   const geometry = new THREE.ExtrudeGeometry(raisedShape, {

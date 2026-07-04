@@ -2,7 +2,7 @@ export type PanelItemKind = "pot" | "jack" | "hole" | "text" | "artwork" | "vect
 
 export type GerberTargetLayer = "none" | "frontMask" | "frontSilk" | "frontCopper" | "backMask" | "backSilk" | "backCopper";
 
-export type StlGraphicMode = "raised" | "cutout";
+export type StlGraphicMode = "raised" | "cutout" | "reveal";
 
 export type VectorPoint = {
   x: number;

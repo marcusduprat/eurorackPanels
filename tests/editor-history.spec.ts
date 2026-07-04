@@ -180,6 +180,9 @@ test("supports grouped Gerber dragging and vector object export controls", async
   await expect(page.getByLabel("3D height")).toHaveValue("0.8");
   await page.getByLabel("3D", { exact: true }).selectOption("cutout");
   await expect(page.getByLabel("3D height")).toBeHidden();
+  await page.getByLabel("3D", { exact: true }).selectOption("reveal");
+  await expect(gerberTarget).toHaveValue("frontMask");
+  await expect(page.getByLabel("3D height")).toBeHidden();
   await page.getByLabel("3D", { exact: true }).selectOption("raised");
   await page.locator(".object-row.selected").dragTo(page.locator(".object-layer-group").filter({ hasText: "Front silk" }));
   await expect(gerberTarget).toHaveValue("frontSilk");

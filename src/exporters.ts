@@ -397,14 +397,10 @@ export function createGerberGraphicLayer(settings: PanelSettings, items: PanelIt
     const target = item.gerberLayer ?? defaultGerberLayer(item);
     return target === layer ? gerberSegmentsForItem(item) : [];
   });
+  const clearSegments = items.flatMap((item) => (revealClearsLayer(item, layer) ? gerberSegmentsForItem(item) : []));
   const isBaseLayer = layer === "frontMask" || layer === "backMask";
-
-  const body = segments
-    .map(
-      ([start, end]) => `X${g(clampMm(start[0], settings.widthMm))}Y${g(clampMm(start[1], settings.heightMm))}D02*
-X${g(clampMm(end[0], settings.widthMm))}Y${g(clampMm(end[1], settings.heightMm))}D01*`,
-    )
-    .join("\n");
+  const body = gerberSegmentBody(segments, settings);
+  const clearBody = gerberSegmentBody(clearSegments, settings);
 
   return `%FSLAX46Y46*%
 %MOMM*%
@@ -416,10 +412,34 @@ X${g(settings.widthMm / 2)}Y${g(settings.heightMm / 2)}D03*` : ""}
 D10*
 G01*
 ${body}
+${clearBody ? `%LPC*%
+D10*
+G01*
+${clearBody}
+%LPD*%` : ""}
 M02*
 `;
 }
 
+function gerberSegmentBody(segments: Array<[Point2, Point2]>, settings: PanelSettings) {
+  return segments
+    .map(
+      ([start, end]) => `X${g(clampMm(start[0], settings.widthMm))}Y${g(clampMm(start[1], settings.heightMm))}D02*
+X${g(clampMm(end[0], settings.widthMm))}Y${g(clampMm(end[1], settings.heightMm))}D01*`,
+    )
+    .join("\n");
+}
+
+function revealClearsLayer(item: PanelItem, layer: GerberGraphicLayer) {
+  if (item.stlMode !== "reveal") return false;
+  const baseLayer = revealBaseLayer(item.gerberLayer ?? defaultGerberLayer(item));
+  if (baseLayer === "frontMask") return layer === "frontCopper" || layer === "frontSilk";
+  return layer === "backCopper" || layer === "backSilk";
+}
+
+function revealBaseLayer(layer: GerberTargetLayer): "frontMask" | "backMask" {
+  return layer === "backMask" || layer === "backCopper" || layer === "backSilk" ? "backMask" : "frontMask";
+}
 export function createDrill(settings: PanelSettings, items: PanelItem[]) {
   const holes = panelHoles(settings, items);
   const groups = new Map<string, Hole[]>();
@@ -485,7 +505,7 @@ export function createStl(settings: PanelSettings, items: PanelItem[]) {
     addWall(facets, loop, zBottom, zTop, true);
   }
 
-  for (const item of items.filter((entry) => entry.stlMode !== "cutout")) {
+  for (const item of items.filter((entry) => (entry.stlMode ?? "raised") === "raised")) {
     addReliefForItem(facets, item, zTop, holeLoops);
   }
 
@@ -610,6 +630,7 @@ function gerberSegmentsForItem(item: PanelItem): Array<[Point2, Point2]> {
 }
 
 function defaultGerberLayer(item: PanelItem): GerberTargetLayer {
+  if (item.stlMode === "reveal") return "frontMask";
   if (item.kind === "text" || item.kind === "artwork" || item.kind.startsWith("vector-")) return "frontSilk";
   return "none";
 }
