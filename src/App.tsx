@@ -89,9 +89,11 @@ const gerberTargetOptions: Array<{ value: GerberTargetLayer; label: string }> = 
   { value: "frontMask", label: "Front base" },
   { value: "frontSilk", label: "Front silk" },
   { value: "frontCopper", label: "Front copper" },
+  { value: "frontReveal", label: "Front PCB reveal" },
   { value: "backMask", label: "Back base" },
   { value: "backSilk", label: "Back silk" },
   { value: "backCopper", label: "Back copper" },
+  { value: "backReveal", label: "Back PCB reveal" },
 ];
 
 const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; color: string }> = [
@@ -99,9 +101,11 @@ const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; colo
   { value: "frontMask", label: "Front base", color: "#1f9d8a" },
   { value: "frontCopper", label: "Front copper", color: "#c86f0f" },
   { value: "frontSilk", label: "Front silk", color: "#2f5ea8" },
+  { value: "frontReveal", label: "Front PCB reveal", color: "#29a36f" },
   { value: "backMask", label: "Back base", color: "#6b9f3f" },
   { value: "backCopper", label: "Back copper", color: "#b2466c" },
   { value: "backSilk", label: "Back silk", color: "#8757c7" },
+  { value: "backReveal", label: "Back PCB reveal", color: "#74ad4d" },
 ];
 
 const defaultObjectLayerColors = Object.fromEntries(objectLayerSections.map((section) => [section.value, section.color])) as Record<GerberTargetLayer, string>;
@@ -341,7 +345,7 @@ function App() {
     const item = items.find((entry) => entry.id === id);
     if (!item || !isGraphicItem(item) || item.gerberLayer === gerberLayer) return;
     pushHistory();
-    setItems((current) => current.map((entry) => (entry.id === id ? { ...entry, gerberLayer } : entry)));
+    setItems((current) => current.map((entry) => (entry.id === id ? { ...entry, gerberLayer, stlMode: stlModeForGerberLayer(gerberLayer, entry.stlMode) } : entry)));
     setSelection({ type: "item", id });
   }
 
@@ -1740,7 +1744,7 @@ function ItemInspector({
             label="Gerber"
             value={item.gerberLayer ?? "frontSilk"}
             options={gerberTargetOptions}
-            onChange={(gerberLayer) => updateItem({ gerberLayer: gerberLayer as GerberTargetLayer })}
+            onChange={(gerberLayer) => updateItem({ gerberLayer: gerberLayer as GerberTargetLayer, stlMode: stlModeForGerberLayer(gerberLayer as GerberTargetLayer, item.stlMode) })}
           />
         </>
       )}
@@ -2263,14 +2267,20 @@ function labelForKind(kind: PanelItemKind) {
   return "Artwork";
 }
 
+function stlModeForGerberLayer(gerberLayer: GerberTargetLayer, current?: StlGraphicMode): StlGraphicMode {
+  if (gerberLayer === "none") return "cutout";
+  if (gerberLayer === "frontReveal" || gerberLayer === "backReveal") return "reveal";
+  return current === "cutout" || current === "reveal" ? "raised" : (current ?? "raised");
+}
+
 function gerberLayerForGraphicMode(mode: StlGraphicMode, current?: GerberTargetLayer): GerberTargetLayer {
   if (mode === "cutout") return "none";
-  if (mode === "reveal") return current === "backMask" ? "backMask" : "frontMask";
-  return !current || current === "none" || current === "frontMask" || current === "backMask" ? "frontSilk" : current;
+  if (mode === "reveal") return current === "backMask" || current === "backCopper" || current === "backSilk" || current === "backReveal" ? "backReveal" : "frontReveal";
+  return !current || current === "none" || current === "frontMask" || current === "backMask" || current === "frontReveal" || current === "backReveal" ? "frontSilk" : current;
 }
 
 function graphicDefaults(gerberLayer: GerberTargetLayer = "frontSilk"): Pick<PanelItem, "gerberLayer" | "reliefHeight" | "stlMode"> {
-  return { gerberLayer, reliefHeight: 0.4, stlMode: "raised" };
+  return { gerberLayer, reliefHeight: 0.4, stlMode: gerberLayer === "frontReveal" || gerberLayer === "backReveal" ? "reveal" : "raised" };
 }
 
 function isGraphicItem(item: PanelItem) {
@@ -2279,13 +2289,13 @@ function isGraphicItem(item: PanelItem) {
 
 function objectListLayer(item: PanelItem): GerberTargetLayer {
   if (item.stlMode === "cutout") return "none";
-  if (item.stlMode === "reveal") return item.gerberLayer && item.gerberLayer !== "none" ? item.gerberLayer : "frontMask";
+  if (item.stlMode === "reveal") return item.gerberLayer === "backReveal" ? "backReveal" : "frontReveal";
   return isGraphicItem(item) ? (item.gerberLayer ?? "frontSilk") : "none";
 }
 
 function itemDisplayColor(item: PanelItem, layerColors: Record<GerberTargetLayer, string>) {
   if (item.stlMode === "cutout" || !isGraphicItem(item)) return layerColors.none;
-  if (item.stlMode === "reveal") return layerColors[item.gerberLayer && item.gerberLayer !== "none" ? item.gerberLayer : "frontMask"];
+  if (item.stlMode === "reveal") return layerColors[item.gerberLayer === "backReveal" ? "backReveal" : "frontReveal"];
   return layerColors[item.gerberLayer ?? "frontSilk"];
 }
 

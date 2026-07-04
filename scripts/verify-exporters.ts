@@ -32,7 +32,7 @@ const revealItems = [
     height: 8,
     filled: true,
     stlMode: "reveal" as const,
-    gerberLayer: "frontMask" as const,
+    gerberLayer: "frontReveal" as const,
   },
 ];
 const revealStl = createStl(DEFAULT_PANEL, revealItems);

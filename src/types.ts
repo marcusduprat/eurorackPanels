@@ -1,6 +1,6 @@
 export type PanelItemKind = "pot" | "jack" | "hole" | "text" | "artwork" | "vector-circle" | "vector-rect" | "vector-line" | "vector-path";
 
-export type GerberTargetLayer = "none" | "frontMask" | "frontSilk" | "frontCopper" | "backMask" | "backSilk" | "backCopper";
+export type GerberTargetLayer = "none" | "frontMask" | "frontSilk" | "frontCopper" | "frontReveal" | "backMask" | "backSilk" | "backCopper" | "backReveal";
 
 export type StlGraphicMode = "raised" | "cutout" | "reveal";
 

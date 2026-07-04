@@ -11,7 +11,7 @@ type Hole = {
 
 type Point3 = [number, number, number];
 type Point2 = [number, number];
-type GerberGraphicLayer = Exclude<GerberTargetLayer, "none">;
+type GerberGraphicLayer = Exclude<GerberTargetLayer, "none" | "frontReveal" | "backReveal">;
 
 const MM_TO_GERBER = 1_000_000;
 const DEFAULT_GRAPHIC_STROKE = 0.22;
@@ -438,7 +438,7 @@ function revealClearsLayer(item: PanelItem, layer: GerberGraphicLayer) {
 }
 
 function revealBaseLayer(layer: GerberTargetLayer): "frontMask" | "backMask" {
-  return layer === "backMask" || layer === "backCopper" || layer === "backSilk" ? "backMask" : "frontMask";
+  return layer === "backMask" || layer === "backCopper" || layer === "backSilk" || layer === "backReveal" ? "backMask" : "frontMask";
 }
 export function createDrill(settings: PanelSettings, items: PanelItem[]) {
   const holes = panelHoles(settings, items);
@@ -630,7 +630,7 @@ function gerberSegmentsForItem(item: PanelItem): Array<[Point2, Point2]> {
 }
 
 function defaultGerberLayer(item: PanelItem): GerberTargetLayer {
-  if (item.stlMode === "reveal") return "frontMask";
+  if (item.stlMode === "reveal") return "frontReveal";
   if (item.kind === "text" || item.kind === "artwork" || item.kind.startsWith("vector-")) return "frontSilk";
   return "none";
 }
