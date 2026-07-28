@@ -39,6 +39,7 @@ test("imports named SVG layers as separate aligned artwork objects", async ({ pa
   await expect(objectRows.filter({ hasText: "module-face / Legends" })).toHaveCount(1);
   await expect(objectRows.filter({ hasText: "module-face / Cut lines" })).toHaveCount(1);
   await expect(page.locator(".item-view.artwork image")).toHaveCount(3);
+  await expect.poll(() => page.locator(".item-view.artwork path").count()).toBeGreaterThan(0);
 
   await objectRows.filter({ hasText: "module-face / Panel fill" }).click();
   await expect(page.locator(".statusbar")).toContainText("Selected: module-face / Panel fill");

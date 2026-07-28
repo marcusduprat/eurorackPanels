@@ -110,7 +110,7 @@ function isValidEmptyLayer(filePath: string, text: string) {
   const hasEnd = /M02\*/i.test(text);
   const hasDrawOrFlash = /D0?1\*|D0?3\*/i.test(text);
   const fileFunction = text.match(/%TF\.FileFunction,([^*]+)\*%/i)?.[1] ?? "";
-  const knownOptionalLayer = /Paste|Glue|Fab|User|Eco/i.test(fileFunction) || /paste/i.test(basename(filePath));
+  const knownOptionalLayer = /Copper|Soldermask|Legend|Paste|Glue|Fab|User|Eco/i.test(fileFunction) || /paste/i.test(basename(filePath));
   return hasEnd && !hasDrawOrFlash && knownOptionalLayer;
 }
 

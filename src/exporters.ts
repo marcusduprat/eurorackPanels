@@ -15,7 +15,14 @@ type GerberGraphicLayer = Exclude<GerberTargetLayer, "none" | "frontReveal" | "b
 
 const MM_TO_GERBER = 1_000_000;
 const DEFAULT_GRAPHIC_STROKE = 0.22;
-const GERBER_FILL_STEP = 0.45;
+const GERBER_FILE_FUNCTION: Record<GerberGraphicLayer, string> = {
+  frontMask: "Soldermask,Top",
+  frontSilk: "Legend,Top",
+  frontCopper: "Copper,L1,Top",
+  backMask: "Soldermask,Bot",
+  backSilk: "Legend,Bot",
+  backCopper: "Copper,L2,Bot",
+};
 const STROKE_FONT: Record<string, Array<[number, number, number, number]>> = {
   " ": [],
   "?": [
@@ -379,6 +386,8 @@ export function createGerberOutline(settings: PanelSettings) {
   const h = settings.heightMm;
   return `%FSLAX46Y46*%
 %MOMM*%
+%TF.FileFunction,Profile,NP*%
+%TF.FilePolarity,Positive*%
 %LPD*%
 %ADD10C,0.100000*%
 D10*
@@ -393,22 +402,17 @@ M02*
 }
 
 export function createGerberGraphicLayer(settings: PanelSettings, items: PanelItem[], layer: GerberGraphicLayer) {
-  const segments = items.flatMap((item) => {
-    const target = item.gerberLayer ?? defaultGerberLayer(item);
-    return target === layer ? gerberSegmentsForItem(item) : [];
-  });
-  const clearSegments = items.flatMap((item) => (revealClearsLayer(item, layer) ? gerberSegmentsForItem(item) : []));
-  const isBaseLayer = layer === "frontMask" || layer === "backMask";
-  const body = gerberSegmentBody(segments, settings);
-  const clearBody = gerberSegmentBody(clearSegments, settings);
+  const darkItems = items.filter((item) => itemDrawsOnGerberLayer(item, layer));
+  const clearItems = items.filter((item) => revealClearsLayer(item, layer));
+  const body = gerberGeometryBody(darkItems, settings);
+  const clearBody = gerberGeometryBody(clearItems, settings);
 
   return `%FSLAX46Y46*%
 %MOMM*%
+%TF.FileFunction,${GERBER_FILE_FUNCTION[layer]}*%
+%TF.FilePolarity,Positive*%
 %LPD*%
 %ADD10C,${DEFAULT_GRAPHIC_STROKE.toFixed(6)}*%
-${isBaseLayer ? `%ADD11R,${settings.widthMm.toFixed(6)}X${settings.heightMm.toFixed(6)}*%` : ""}
-${isBaseLayer ? `D11*
-X${g(settings.widthMm / 2)}Y${g(settings.heightMm / 2)}D03*` : ""}
 D10*
 G01*
 ${body}
@@ -421,6 +425,12 @@ M02*
 `;
 }
 
+function gerberGeometryBody(items: PanelItem[], settings: PanelSettings) {
+  const segments = items.flatMap(gerberSegmentsForItem);
+  const regions = items.flatMap((item) => gerberRegionsForItem(item, item.stlMode === "reveal"));
+  return [gerberSegmentBody(segments, settings), gerberRegionBody(regions, settings)].filter(Boolean).join("\n");
+}
+
 function gerberSegmentBody(segments: Array<[Point2, Point2]>, settings: PanelSettings) {
   return segments
     .map(
@@ -428,6 +438,29 @@ function gerberSegmentBody(segments: Array<[Point2, Point2]>, settings: PanelSet
 X${g(clampMm(end[0], settings.widthMm))}Y${g(clampMm(end[1], settings.heightMm))}D01*`,
     )
     .join("\n");
+}
+
+function gerberRegionBody(regions: Point2[][], settings: PanelSettings) {
+  return regions
+    .filter((points) => points.length >= 3)
+    .map((points) => {
+      const first = points[0];
+      const draws = [...points.slice(1), first]
+        .map((point) => `X${g(clampMm(point[0], settings.widthMm))}Y${g(clampMm(point[1], settings.heightMm))}D01*`)
+        .join("\n");
+      return `G36*
+X${g(clampMm(first[0], settings.widthMm))}Y${g(clampMm(first[1], settings.heightMm))}D02*
+${draws}
+G37*`;
+    })
+    .join("\n");
+}
+
+function itemDrawsOnGerberLayer(item: PanelItem, layer: GerberGraphicLayer) {
+  const target = item.gerberLayer ?? defaultGerberLayer(item);
+  if (target === "frontReveal") return layer === "frontMask";
+  if (target === "backReveal") return layer === "backMask";
+  return target === layer;
 }
 
 function revealClearsLayer(item: PanelItem, layer: GerberGraphicLayer) {
@@ -449,7 +482,13 @@ export function createDrill(settings: PanelSettings, items: PanelItem[]) {
   }
 
   const sizes = [...groups.keys()].sort((a, b) => Number(a) - Number(b));
-  const header = ["M48", "METRIC,TZ"];
+  const header = [
+    "M48",
+    "; #@! TF.FileFunction,NonPlated,1,2,NPTH",
+    ";FILE_FORMAT=3:3",
+    "METRIC,TZ",
+    "FMAT,2",
+  ];
   sizes.forEach((size, index) => {
     header.push(`T${String(index + 1).padStart(2, "0")}C${size}`);
   });
@@ -603,27 +642,42 @@ function gerberSegmentsForItem(item: PanelItem): Array<[Point2, Point2]> {
   }
 
   if (item.kind === "artwork") {
-    if (hasArtworkTrace(item)) {
-      return artworkTraceLoops(item).flatMap((loop) => [...fillSegmentsForPolygon(loop), ...loopSegments(loop, true)]);
-    }
-    const loop = rectLoop(item);
-    return [...(item.filled ? fillSegmentsForPolygon(loop) : []), ...loopSegments(loop, true)];
+    return hasArtworkTrace(item) ? artworkTraceLoops(item).flatMap((loop) => loopSegments(loop, true)) : [];
   }
 
   if (item.kind === "vector-circle") {
-    const loop = circleLoop2(item.x, item.y, (item.diameter ?? 8) / 2, 48);
-    return [...(item.filled ? fillSegmentsForPolygon(loop) : []), ...loopSegments(loop, true)];
+    return loopSegments(circleLoop2(item.x, item.y, (item.diameter ?? 8) / 2, 48), true);
   }
 
   if (item.kind === "vector-rect") {
-    const loop = rectLoop(item);
-    return [...(item.filled ? fillSegmentsForPolygon(loop) : []), ...loopSegments(loop, true)];
+    return loopSegments(rectLoop(item), true);
   }
 
   if (item.kind === "vector-line" || item.kind === "vector-path") {
     const points = absoluteVectorPoints(item);
     if (points.length < 2) return [];
-    return [...(item.closed && item.filled ? fillSegmentsForPolygon(points) : []), ...loopSegments(points, item.closed ?? false)];
+    return loopSegments(points, item.closed ?? false);
+  }
+
+  return [];
+}
+
+function gerberRegionsForItem(item: PanelItem, forceFilled = false): Point2[][] {
+  if (item.kind === "artwork") {
+    return hasArtworkTrace(item) ? artworkTraceLoops(item) : [];
+  }
+
+  if (item.kind === "vector-circle") {
+    return item.filled || forceFilled ? [circleLoop2(item.x, item.y, (item.diameter ?? 8) / 2, 48)] : [];
+  }
+
+  if (item.kind === "vector-rect") {
+    return item.filled || forceFilled ? [rectLoop(item)] : [];
+  }
+
+  if (item.kind === "vector-path") {
+    const points = absoluteVectorPoints(item);
+    return item.closed && (item.filled || forceFilled) && points.length >= 3 ? [points] : [];
   }
 
   return [];
@@ -633,34 +687,6 @@ function defaultGerberLayer(item: PanelItem): GerberTargetLayer {
   if (item.stlMode === "reveal") return "frontReveal";
   if (item.kind === "text" || item.kind === "artwork" || item.kind.startsWith("vector-")) return "frontSilk";
   return "none";
-}
-
-function fillSegmentsForPolygon(points: Point2[]): Array<[Point2, Point2]> {
-  if (points.length < 3) return [];
-  const minY = Math.min(...points.map((point) => point[1]));
-  const maxY = Math.max(...points.map((point) => point[1]));
-  const segments: Array<[Point2, Point2]> = [];
-
-  for (let y = Math.ceil(minY / GERBER_FILL_STEP) * GERBER_FILL_STEP; y <= maxY; y += GERBER_FILL_STEP) {
-    const intersections: number[] = [];
-    for (let index = 0; index < points.length; index += 1) {
-      const a = points[index];
-      const b = points[(index + 1) % points.length];
-      if ((a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y)) {
-        const ratio = (y - a[1]) / (b[1] - a[1]);
-        intersections.push(a[0] + ratio * (b[0] - a[0]));
-      }
-    }
-    intersections.sort((a, b) => a - b);
-    for (let index = 1; index < intersections.length; index += 2) {
-      segments.push([
-        [intersections[index - 1], y],
-        [intersections[index], y],
-      ]);
-    }
-  }
-
-  return segments;
 }
 
 function addReliefForItem(facets: string[], item: PanelItem, zBase: number, blockers: Point2[][]) {

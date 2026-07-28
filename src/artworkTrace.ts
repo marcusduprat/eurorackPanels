@@ -4,12 +4,13 @@ const TRACE_MAX_DIMENSION = 128;
 const TRACE_THRESHOLD = 154;
 const TRACE_ALPHA_THRESHOLD = 32;
 const TRACE_MIN_DETAIL = 32;
-const TRACE_MAX_DETAIL = 192;
+const TRACE_MAX_DETAIL = 512;
 
 export type TraceImageOptions = {
   mode?: TraceMode;
   threshold?: number;
   detail?: number;
+  allowUpscale?: boolean;
 };
 
 export async function traceImageToArtwork(dataUrl: string, options: TraceImageOptions = {}): Promise<ArtworkTrace> {
@@ -17,7 +18,8 @@ export async function traceImageToArtwork(dataUrl: string, options: TraceImageOp
   const detail = clamp(Math.round(options.detail ?? TRACE_MAX_DIMENSION), TRACE_MIN_DETAIL, TRACE_MAX_DETAIL);
   const threshold = clamp(Math.round(options.threshold ?? TRACE_THRESHOLD), 0, 255);
   const requestedMode = options.mode ?? "auto";
-  const scale = Math.min(1, detail / Math.max(image.naturalWidth, image.naturalHeight));
+  const requestedScale = detail / Math.max(image.naturalWidth, image.naturalHeight);
+  const scale = options.allowUpscale ? requestedScale : Math.min(1, requestedScale);
   const gridWidth = Math.max(1, Math.round(image.naturalWidth * scale));
   const gridHeight = Math.max(1, Math.round(image.naturalHeight * scale));
   const canvas = document.createElement("canvas");

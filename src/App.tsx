@@ -91,11 +91,11 @@ const toolOptions: Array<{ mode: ToolMode; label: string; icon: typeof MousePoin
 
 const gerberTargetOptions: Array<{ value: GerberTargetLayer; label: string }> = [
   { value: "none", label: "None" },
-  { value: "frontMask", label: "Front base" },
+  { value: "frontMask", label: "Front mask opening" },
   { value: "frontSilk", label: "Front silk" },
   { value: "frontCopper", label: "Front copper" },
   { value: "frontReveal", label: "Front PCB reveal" },
-  { value: "backMask", label: "Back base" },
+  { value: "backMask", label: "Back mask opening" },
   { value: "backSilk", label: "Back silk" },
   { value: "backCopper", label: "Back copper" },
   { value: "backReveal", label: "Back PCB reveal" },
@@ -103,11 +103,11 @@ const gerberTargetOptions: Array<{ value: GerberTargetLayer; label: string }> = 
 
 const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; color: string }> = [
   { value: "none", label: "Cutouts / none", color: "#64748b" },
-  { value: "frontMask", label: "Front base", color: "#1f9d8a" },
+  { value: "frontMask", label: "Front mask opening", color: "#1f9d8a" },
   { value: "frontCopper", label: "Front copper", color: "#c86f0f" },
   { value: "frontSilk", label: "Front silk", color: "#2f5ea8" },
   { value: "frontReveal", label: "Front PCB reveal", color: "#29a36f" },
-  { value: "backMask", label: "Back base", color: "#6b9f3f" },
+  { value: "backMask", label: "Back mask opening", color: "#6b9f3f" },
   { value: "backCopper", label: "Back copper", color: "#b2466c" },
   { value: "backSilk", label: "Back silk", color: "#8757c7" },
   { value: "backReveal", label: "Back PCB reveal", color: "#74ad4d" },
@@ -825,8 +825,13 @@ function App() {
 
       if (lower.endsWith(".svg")) {
         const svgLayers = svgArtworkLayers(await file.text(), file.name);
-        const imported = svgLayers.map((layer) => {
+        const imported = await Promise.all(svgLayers.map(async (layer) => {
           const width = 28;
+          const trace = await traceImageToArtwork(layer.imageUrl, {
+            mode: "alpha",
+            detail: 512,
+            allowUpscale: true,
+          }).catch(() => null);
           return {
             id: crypto.randomUUID(),
             kind: "artwork" as const,
@@ -838,11 +843,12 @@ function App() {
             rotation: 0,
             imageUrl: layer.imageUrl,
             fileName: file.name,
-            filled: false,
+            artworkTrace: trace ?? undefined,
+            filled: Boolean(trace?.paths.length),
             opacity: 1,
             ...graphicDefaults(defaultGraphicLayer),
           };
-        });
+        }));
         setItems((current) => [...current, ...imported]);
         const selected = imported.at(-1);
         if (selected) setSelection({ type: "item", id: selected.id });
