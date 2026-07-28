@@ -17,6 +17,7 @@ Open `http://127.0.0.1:5173`.
 - Import PCB Gerbers, Excellon drill files, and DXF drawings as translucent alignment layers.
 - Import Gerber ZIP bundles directly.
 - Import PNG, JPG, and WebP artwork; named top-level SVG layers import as separate, aligned panel objects.
+- Tint imported SVG artwork with its object-layer color, and lock or hide objects while arranging overlaps.
 - Place and edit pots, jacks, holes, labels, and artwork in millimeters.
 - Save/load project JSON.
 - Export SVG, DXF, Gerber outline + drill file, and STL for 3D printing.

@@ -41,6 +41,8 @@ export type PanelItem = {
   imageUrl?: string;
   fileName?: string;
   artworkTrace?: ArtworkTrace;
+  editorVisible?: boolean;
+  locked?: boolean;
   opacity?: number;
   reliefHeight?: number;
   stlMode?: StlGraphicMode;

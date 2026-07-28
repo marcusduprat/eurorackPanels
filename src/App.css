@@ -388,10 +388,44 @@ button {
 }
 
 .object-row {
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: 8px;
   padding: 6px 7px;
   text-align: left;
+}
+
+.object-row.hidden > svg,
+.object-row.hidden > span {
+  opacity: 0.42;
+}
+
+.object-row.locked {
+  box-shadow: inset 3px 0 0 #94a3b8;
+}
+
+.object-row-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.object-row-action {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  place-items: center;
+}
+
+.object-row-action:hover,
+.object-row-action:focus-visible {
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #172033;
 }
 
 .layer-row:hover,

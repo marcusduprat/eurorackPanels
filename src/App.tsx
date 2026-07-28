@@ -8,6 +8,8 @@ import {
   Copy,
   Crosshair,
   Download,
+  Eye,
+  EyeOff,
   FileDown,
   FileImage,
   FolderOpen,
@@ -16,6 +18,8 @@ import {
   Hexagon,
   Image,
   Layers,
+  Lock,
+  LockOpen,
   Minus,
   MousePointer2,
   Move,
@@ -348,6 +352,18 @@ function App() {
     pushHistory();
     setItems((current) => current.map((entry) => (entry.id === id ? { ...entry, gerberLayer, stlMode: stlModeForGerberLayer(gerberLayer, entry.stlMode) } : entry)));
     setSelection({ type: "item", id });
+  }
+
+  function toggleItemVisibility(id: string) {
+    const item = items.find((entry) => entry.id === id);
+    if (!item) return;
+    updateItem(id, { editorVisible: item.editorVisible === false });
+  }
+
+  function toggleItemLock(id: string) {
+    const item = items.find((entry) => entry.id === id);
+    if (!item) return;
+    updateItem(id, { locked: !item.locked });
   }
 
   function toggleObjectLayer(layer: GerberTargetLayer) {
@@ -1131,28 +1147,65 @@ function App() {
                       </div>
                       {!collapsed && (
                         <div id={`object-layer-${section.value}`} className="object-layer-items">
-                          {sectionItems.map((item) => (
-                            <button
-                              type="button"
-                              key={item.id}
-                              draggable={isGraphicItem(item)}
-                              className={`object-row ${selection?.type === "item" && selection.id === item.id ? "selected" : ""}`}
-                              onClick={() => setSelection({ type: "item", id: item.id })}
-                              onDragStart={(event) => {
-                                event.dataTransfer.setData("text/panel-object-id", item.id);
-                                event.dataTransfer.setData("text/plain", item.id);
-                                event.dataTransfer.effectAllowed = "move";
-                              }}
-                            >
-                              {iconForItem(item.kind)}
-                              <span>
-                                <strong>{item.label}</strong>
-                                <small>
-                                  {round(item.x)} / {round(item.y)} mm
-                                </small>
-                              </span>
-                            </button>
-                          ))}
+                          {sectionItems.map((item) => {
+                            const itemVisible = item.editorVisible !== false;
+                            return (
+                              <div
+                                key={item.id}
+                                role="button"
+                                tabIndex={0}
+                                draggable={isGraphicItem(item) && !item.locked}
+                                className={`object-row ${selection?.type === "item" && selection.id === item.id ? "selected" : ""} ${itemVisible ? "" : "hidden"} ${
+                                  item.locked ? "locked" : ""
+                                }`}
+                                onClick={() => setSelection({ type: "item", id: item.id })}
+                                onKeyDown={(event) => {
+                                  if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                                  event.preventDefault();
+                                  setSelection({ type: "item", id: item.id });
+                                }}
+                                onDragStart={(event) => {
+                                  event.dataTransfer.setData("text/panel-object-id", item.id);
+                                  event.dataTransfer.setData("text/plain", item.id);
+                                  event.dataTransfer.effectAllowed = "move";
+                                }}
+                              >
+                                {iconForItem(item.kind)}
+                                <span>
+                                  <strong>{item.label}</strong>
+                                  <small>
+                                    {round(item.x)} / {round(item.y)} mm
+                                  </small>
+                                </span>
+                                <div className="object-row-actions">
+                                  <button
+                                    type="button"
+                                    className="object-row-action"
+                                    aria-label={`${itemVisible ? "Hide" : "Show"} ${item.label}`}
+                                    title={itemVisible ? "Hide on canvas" : "Show on canvas"}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      toggleItemVisibility(item.id);
+                                    }}
+                                  >
+                                    {itemVisible ? <Eye size={14} /> : <EyeOff size={14} />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="object-row-action"
+                                    aria-label={`${item.locked ? "Unlock" : "Lock"} ${item.label}`}
+                                    title={item.locked ? "Unlock canvas editing" : "Lock canvas editing"}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      toggleItemLock(item.id);
+                                    }}
+                                  >
+                                    {item.locked ? <Lock size={14} /> : <LockOpen size={14} />}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -1241,16 +1294,20 @@ function App() {
               </g>
 
               <g className="panel-items">
-                {[...items.filter(isGraphicItem), ...items.filter((item) => !isGraphicItem(item))].map((item) => (
-                  <ItemView
-                    key={item.id}
-                    item={item}
-                    selected={selection?.type === "item" && selection.id === item.id}
-                    layerColors={layerColors}
-                    onPointerDown={(event) => onItemPointerDown(event, item)}
-                    onPointPointerDown={onVectorPointPointerDown}
-                    onResizePointerDown={onResizePointerDown}
-                  />
+                {[
+                  ...items.filter((item) => item.editorVisible !== false && isGraphicItem(item)),
+                  ...items.filter((item) => item.editorVisible !== false && !isGraphicItem(item)),
+                ].map((item) => (
+                  <g key={item.id} pointerEvents={item.locked ? "none" : undefined}>
+                    <ItemView
+                      item={item}
+                      selected={selection?.type === "item" && selection.id === item.id && !item.locked}
+                      layerColors={layerColors}
+                      onPointerDown={(event) => onItemPointerDown(event, item)}
+                      onPointPointerDown={onVectorPointPointerDown}
+                      onResizePointerDown={onResizePointerDown}
+                    />
+                  </g>
                 ))}
               </g>
 
@@ -2047,15 +2104,33 @@ function ItemView({
     const width = item.width ?? 20;
     const height = item.height ?? 20;
     const tracePaths = hasArtworkTrace(item) ? item.artworkTrace.paths : [];
+    const tintSvgArtwork = item.imageUrl?.startsWith("data:image/svg") ?? false;
+    const tintFilterId = `artwork-tint-${item.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
     return (
       <g className={`item-view artwork ${selected ? "selected" : ""}`} onPointerDown={onPointerDown}>
+        {tintSvgArtwork && (
+          <defs>
+            <filter id={tintFilterId} x="0" y="0" width="100%" height="100%" colorInterpolationFilters="sRGB">
+              <feFlood floodColor={color} result="tint" />
+              <feComposite in="tint" in2="SourceAlpha" operator="in" />
+            </filter>
+          </defs>
+        )}
         <g transform={transform}>
           {tracePaths.length ? (
             tracePaths.map((path, index) => (
               <path key={index} d={localTracePathD(item, path)} fill={color} fillOpacity={item.opacity ?? 1} stroke="none" />
             ))
           ) : item.imageUrl ? (
-            <image href={item.imageUrl} x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} opacity={item.opacity ?? 1} />
+            <image
+              href={item.imageUrl}
+              x={item.x - width / 2}
+              y={item.y - height / 2}
+              width={width}
+              height={height}
+              opacity={item.opacity ?? 1}
+              filter={tintSvgArtwork ? `url(#${tintFilterId})` : undefined}
+            />
           ) : (
             <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill={color} fillOpacity="0.16" stroke={color} strokeWidth="0.18" />
           )}
