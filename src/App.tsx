@@ -49,6 +49,7 @@ import {
   panelHoles,
 } from "./exporters";
 import { boundsForPrimitives, parseDxf, parseExcellon, parseGerber } from "./gerber";
+import { svgArtworkLayers } from "./svgLayers";
 import type { DragState, GerberLayer, GerberPrimitive, GerberTargetLayer, PanelItem, PanelItemKind, PanelSettings, StlGraphicMode, ToolMode, TraceMode } from "./types";
 
 type Selection = { type: "item" | "layer"; id: string } | null;
@@ -806,10 +807,36 @@ function App() {
         continue;
       }
 
+      if (lower.endsWith(".svg")) {
+        const svgLayers = svgArtworkLayers(await file.text(), file.name);
+        const imported = svgLayers.map((layer) => {
+          const width = 28;
+          return {
+            id: crypto.randomUUID(),
+            kind: "artwork" as const,
+            label: layer.name,
+            x: settings.widthMm / 2,
+            y: settings.heightMm / 2,
+            width,
+            height: width / layer.aspectRatio,
+            rotation: 0,
+            imageUrl: layer.imageUrl,
+            fileName: file.name,
+            filled: false,
+            opacity: 1,
+            ...graphicDefaults(defaultGraphicLayer),
+          };
+        });
+        setItems((current) => [...current, ...imported]);
+        const selected = imported.at(-1);
+        if (selected) setSelection({ type: "item", id: selected.id });
+        continue;
+      }
+
       const dataUrl = await readAsDataUrl(file);
       const id = crypto.randomUUID();
-      const trace = lower.endsWith(".svg") ? null : await traceImageToArtwork(dataUrl).catch(() => null);
-      const width = lower.endsWith(".svg") ? 28 : 24;
+      const trace = await traceImageToArtwork(dataUrl).catch(() => null);
+      const width = 24;
       const height = trace ? width * (trace.sourceHeight / trace.sourceWidth) : width;
       const item: PanelItem = {
         id,

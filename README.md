@@ -16,7 +16,7 @@ Open `http://127.0.0.1:5173`.
 - Set Eurorack panel HP, width, height, thickness, grid, and mounting-hole positions.
 - Import PCB Gerbers, Excellon drill files, and DXF drawings as translucent alignment layers.
 - Import Gerber ZIP bundles directly.
-- Import PNG, JPG, WebP, SVG artwork as movable panel artwork.
+- Import PNG, JPG, and WebP artwork; named top-level SVG layers import as separate, aligned panel objects.
 - Place and edit pots, jacks, holes, labels, and artwork in millimeters.
 - Save/load project JSON.
 - Export SVG, DXF, Gerber outline + drill file, and STL for 3D printing.
