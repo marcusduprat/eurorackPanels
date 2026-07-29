@@ -41,7 +41,7 @@ test("supports undo, redo, and deleting a selected object", async ({ page }) => 
   await canvasTools.getByRole("button", { name: "Redo" }).click();
   await expect.poll(() => objectRows.count()).toBe(countAfterPaste + 1);
   await expect(page.locator(".statusbar")).toContainText("Selected: Hole");
-  await page.getByLabel("Preset").selectOption("5");
+  await page.getByLabel("Preset", { exact: true }).selectOption("5");
   await expect(page.getByLabel("Diameter")).toHaveValue("5");
 
   await page.getByRole("button", { name: "Delete object" }).click();

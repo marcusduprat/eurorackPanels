@@ -485,9 +485,9 @@ export function createDrill(settings: PanelSettings, items: PanelItem[]) {
   const header = [
     "M48",
     "; #@! TF.FileFunction,NonPlated,1,2,NPTH",
-    ";FILE_FORMAT=3:3",
-    "METRIC,TZ",
+    ";FORMAT={-:-/ absolute / metric / decimal}",
     "FMAT,2",
+    "METRIC",
   ];
   sizes.forEach((size, index) => {
     header.push(`T${String(index + 1).padStart(2, "0")}C${size}`);
@@ -1021,7 +1021,7 @@ function g(value: number) {
 }
 
 function drill(value: number) {
-  return value.toFixed(3).replace(".", "");
+  return value.toFixed(3);
 }
 
 function f(value: number) {

@@ -9,7 +9,7 @@ const requireFixtures = process.argv.includes("--require");
 const requestedPaths = process.argv.slice(2).filter((arg) => arg !== "--require");
 const scanRoots = requestedPaths.length > 0 ? requestedPaths.map((value) => resolve(value)) : [root, join(root, "fixtures", "gerbers")];
 const skipDirs = new Set(["node_modules", "dist", ".tmp", ".git", "artifacts"]);
-const supported = new Set([".gbr", ".ger", ".gtl", ".gbl", ".gto", ".gbo", ".gko", ".gm1", ".drl", ".xln", ".dxf", ".zip"]);
+const supported = new Set([".gbr", ".ger", ".gtl", ".gbl", ".gto", ".gbo", ".gts", ".gbs", ".gko", ".gm1", ".drl", ".xln", ".dxf", ".zip"]);
 
 const files = unique(
   scanRoots.flatMap((scanRoot) =>

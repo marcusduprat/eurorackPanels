@@ -40,7 +40,7 @@ import {
 import { memo, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import JSZip from "jszip";
 import * as THREE from "three";
-import { artworkTracePathsForItem, hasArtworkTrace, traceImageToArtwork, type TraceImageOptions } from "./artworkTrace";
+import { artworkTracePathsForItem, FABRICATION_TRACE_DETAIL, hasArtworkTrace, traceImageToArtwork, type TraceImageOptions } from "./artworkTrace";
 import { DEFAULT_PANEL, LAYER_COLORS, SAMPLE_ITEMS, SAMPLE_LAYERS } from "./defaults";
 import {
   createDrill,
@@ -49,6 +49,7 @@ import {
   createGerberOutline,
   createStl,
   createSvg,
+  downloadBlob,
   downloadText,
   panelHoles,
 } from "./exporters";
@@ -103,17 +104,58 @@ const gerberTargetOptions: Array<{ value: GerberTargetLayer; label: string }> = 
 
 const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; color: string }> = [
   { value: "none", label: "Cutouts / none", color: "#64748b" },
-  { value: "frontMask", label: "Front mask opening", color: "#1f9d8a" },
-  { value: "frontCopper", label: "Front copper", color: "#c86f0f" },
-  { value: "frontSilk", label: "Front silk", color: "#2f5ea8" },
-  { value: "frontReveal", label: "Front PCB reveal", color: "#29a36f" },
-  { value: "backMask", label: "Back mask opening", color: "#6b9f3f" },
-  { value: "backCopper", label: "Back copper", color: "#b2466c" },
-  { value: "backSilk", label: "Back silk", color: "#8757c7" },
-  { value: "backReveal", label: "Back PCB reveal", color: "#74ad4d" },
+  { value: "frontMask", label: "Front mask opening", color: "#d6b56c" },
+  { value: "frontCopper", label: "Front copper", color: "#c47a32" },
+  { value: "frontSilk", label: "Front silk", color: "#f8fafc" },
+  { value: "frontReveal", label: "Front PCB reveal", color: "#d6b56c" },
+  { value: "backMask", label: "Back mask opening", color: "#c6a45d" },
+  { value: "backCopper", label: "Back copper", color: "#b86f2c" },
+  { value: "backSilk", label: "Back silk", color: "#e2e8f0" },
+  { value: "backReveal", label: "Back PCB reveal", color: "#c6a45d" },
 ];
 
 const defaultObjectLayerColors = Object.fromEntries(objectLayerSections.map((section) => [section.value, section.color])) as Record<GerberTargetLayer, string>;
+
+const pcbVisualLayerOrder: Record<GerberTargetLayer, number> = {
+  backMask: 10,
+  backSilk: 20,
+  backCopper: 30,
+  backReveal: 40,
+  frontMask: 50,
+  frontSilk: 60,
+  frontCopper: 70,
+  frontReveal: 80,
+  none: 90,
+};
+const PCB_VISUAL_LAYER_STEP_MM = 0.002;
+const pcbSurfaceLayerOrder: Record<GerberTargetLayer, number> = {
+  frontMask: 1,
+  backMask: 1,
+  frontSilk: 2,
+  backSilk: 2,
+  frontCopper: 3,
+  backCopper: 3,
+  frontReveal: 4,
+  backReveal: 4,
+  none: 5,
+};
+
+export function pcbThreeLayerPlacement(layer: GerberTargetLayer, panelThickness: number) {
+  const isBack = layer.startsWith("back");
+  const outwardNormal = isBack ? -1 : 1;
+  const surface = isBack ? 0 : panelThickness;
+  return { zSurface: surface + outwardNormal * pcbSurfaceLayerOrder[layer] * PCB_VISUAL_LAYER_STEP_MM, outwardNormal };
+}
+
+const pcbColorOptions = [
+  { label: "Green", color: "#0f7b55" },
+  { label: "Purple", color: "#6d2e8a" },
+  { label: "Red", color: "#b62532" },
+  { label: "Yellow", color: "#d5ad23" },
+  { label: "Blue", color: "#1e4f99" },
+  { label: "Black", color: "#191c20" },
+  { label: "White", color: "#e6e8e4" },
+];
 
 const newGraphicLayerOptions = gerberTargetOptions.filter((option) => option.value !== "none");
 
@@ -163,6 +205,49 @@ const fontOptions = [
   { value: '"Courier New", monospace', label: "Courier" },
   { value: "Impact, Haettenschweiler, sans-serif", label: "Impact" },
 ];
+
+let sessionLocalFontFamilies: string[] = [];
+
+type LocalFontFamilyResult = {
+  family: string;
+};
+
+type WindowWithLocalFonts = Window & {
+  queryLocalFonts?: () => Promise<LocalFontFamilyResult[]>;
+};
+
+function cssLocalFontFamily(family: string) {
+  return `"${family.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function fontValueLabel(value: string) {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  if (quote === '"' || quote === "'") {
+    let label = "";
+    for (let index = 1; index < trimmed.length; index += 1) {
+      if (trimmed[index] === "\\" && index + 1 < trimmed.length) {
+        label += trimmed[index + 1];
+        index += 1;
+      } else if (trimmed[index] === quote) {
+        return label;
+      } else {
+        label += trimmed[index];
+      }
+    }
+  }
+  return trimmed.split(",")[0].trim();
+}
+
+function uniqueLocalFontFamilies(fonts: LocalFontFamilyResult[]) {
+  const byNormalizedFamily = new Map<string, string>();
+  for (const font of fonts) {
+    const family = font.family.trim();
+    const key = family.normalize("NFKC").toLocaleLowerCase();
+    if (family && !byNormalizedFamily.has(key)) byNormalizedFamily.set(key, family);
+  }
+  return [...byNormalizedFamily.values()].sort((a, b) => a.localeCompare(b));
+}
 
 function App() {
   const [settings, setSettings] = useState<PanelSettings>(DEFAULT_PANEL);
@@ -825,14 +910,11 @@ function App() {
 
       if (lower.endsWith(".svg")) {
         const svgLayers = svgArtworkLayers(await file.text(), file.name);
-        const imported = await Promise.all(svgLayers.map(async (layer) => {
+        const imported: PanelItem[] = [];
+        for (const layer of svgLayers) {
           const width = 28;
-          const trace = await traceImageToArtwork(layer.imageUrl, {
-            mode: "alpha",
-            detail: 512,
-            allowUpscale: true,
-          }).catch(() => null);
-          return {
+          const trace = await traceSvgForFabrication(layer.imageUrl);
+          imported.push({
             id: crypto.randomUUID(),
             kind: "artwork" as const,
             label: layer.name,
@@ -847,8 +929,8 @@ function App() {
             filled: Boolean(trace?.paths.length),
             opacity: 1,
             ...graphicDefaults(defaultGraphicLayer),
-          };
-        }));
+          });
+        }
         setItems((current) => [...current, ...imported]);
         const selected = imported.at(-1);
         if (selected) setSelection({ type: "item", id: selected.id });
@@ -914,9 +996,13 @@ function App() {
       layers: GerberLayer[];
       layerColors?: Record<GerberTargetLayer, string>;
     };
+    const importedItems: PanelItem[] = [];
+    for (const item of parsed.items ?? []) {
+      importedItems.push(await upgradeSvgFabricationTrace(item));
+    }
     pushHistory();
-    setSettings(parsed.settings);
-    setItems(parsed.items ?? []);
+    setSettings({ ...DEFAULT_PANEL, ...parsed.settings });
+    setItems(importedItems);
     setLayers(parsed.layers ?? []);
     setLayerColors({ ...defaultObjectLayerColors, ...(parsed.layerColors ?? {}) });
     setSelection(null);
@@ -947,20 +1033,26 @@ function App() {
     downloadText("eurorack-panel.dxf", createDxf(settings, items), "application/dxf");
   }
 
-  function exportGerbers() {
+  async function exportGerbers() {
+    const gerberItems = await prepareTextForGerber(items);
     const files = [
-      { name: "eurorack-panel-Edge_Cuts.gbr", text: createGerberOutline(settings), mime: "application/x-gerber" },
-      { name: "eurorack-panel-F_Mask.gbr", text: createGerberGraphicLayer(settings, items, "frontMask"), mime: "application/x-gerber" },
-      { name: "eurorack-panel-F_Silk.gbr", text: createGerberGraphicLayer(settings, items, "frontSilk"), mime: "application/x-gerber" },
-      { name: "eurorack-panel-F_Cu.gbr", text: createGerberGraphicLayer(settings, items, "frontCopper"), mime: "application/x-gerber" },
-      { name: "eurorack-panel-B_Mask.gbr", text: createGerberGraphicLayer(settings, items, "backMask"), mime: "application/x-gerber" },
-      { name: "eurorack-panel-B_Silk.gbr", text: createGerberGraphicLayer(settings, items, "backSilk"), mime: "application/x-gerber" },
-      { name: "eurorack-panel-B_Cu.gbr", text: createGerberGraphicLayer(settings, items, "backCopper"), mime: "application/x-gerber" },
-      { name: "eurorack-panel.drl", text: createDrill(settings, items), mime: "application/x-excellon" },
+      { name: "eurorack-panel.GKO", text: createGerberOutline(settings) },
+      { name: "eurorack-panel.GTS", text: createGerberGraphicLayer(settings, gerberItems, "frontMask") },
+      { name: "eurorack-panel.GTO", text: createGerberGraphicLayer(settings, gerberItems, "frontSilk") },
+      { name: "eurorack-panel.GTL", text: createGerberGraphicLayer(settings, gerberItems, "frontCopper") },
+      { name: "eurorack-panel.GBS", text: createGerberGraphicLayer(settings, gerberItems, "backMask") },
+      { name: "eurorack-panel.GBO", text: createGerberGraphicLayer(settings, gerberItems, "backSilk") },
+      { name: "eurorack-panel.GBL", text: createGerberGraphicLayer(settings, gerberItems, "backCopper") },
+      { name: "eurorack-panel.XLN", text: createDrill(settings, items) },
     ];
-    files.forEach((file, index) => {
-      window.setTimeout(() => downloadText(file.name, file.text, file.mime), index * 130);
+    const zip = new JSZip();
+    files.forEach((file) => zip.file(file.name, file.text));
+    const blob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 },
     });
+    downloadBlob("eurorack-panel-gerbers.zip", blob);
   }
 
   function exportStl() {
@@ -974,7 +1066,7 @@ function App() {
         type="file"
         multiple
         className="hidden-input"
-        accept=".zip,.gbr,.ger,.gtl,.gbl,.gto,.gbo,.gm1,.gko,.drl,.xln,.txt,.dxf"
+        accept=".zip,.gbr,.ger,.gtl,.gbl,.gto,.gbo,.gts,.gbs,.gm1,.gko,.drl,.xln,.txt,.dxf"
         onChange={(event) => {
           void importGerberFiles(event.target.files);
           event.currentTarget.value = "";
@@ -1277,9 +1369,9 @@ function App() {
               <rect x={view.x - 60} y={view.y - 60} width={canvasSize.width / view.zoom + 120} height={canvasSize.height / view.zoom + 120} fill="url(#major-grid)" />
               <Rulers settings={settings} view={view} canvasSize={canvasSize} />
               <g filter="url(#soft-panel-shadow)">
-                <rect x="0" y="0" width={settings.widthMm} height={settings.heightMm} rx="1.35" fill="#fafafa" stroke="#0f172a" strokeWidth="0.22" />
+                <rect x="0" y="0" width={settings.widthMm} height={settings.heightMm} rx="1.35" fill={panelPcbColor(settings)} stroke="#0f172a" strokeWidth="0.22" />
               </g>
-              <rect x="0" y="0" width={settings.widthMm} height={settings.heightMm} rx="1.35" fill="#ffffff" opacity="0.84" />
+              <rect className="panel-board-surface" x="0" y="0" width={settings.widthMm} height={settings.heightMm} rx="1.35" fill={panelPcbColor(settings)} />
               {settings.showPcbArea !== false && <PcbAreaOverlay settings={settings} />}
 
               <g className="gerber-layers" pointerEvents="none">
@@ -1300,11 +1392,8 @@ function App() {
               </g>
 
               <g className="panel-items">
-                {[
-                  ...items.filter((item) => item.editorVisible !== false && isGraphicItem(item)),
-                  ...items.filter((item) => item.editorVisible !== false && !isGraphicItem(item)),
-                ].map((item) => (
-                  <g key={item.id} pointerEvents={item.locked ? "none" : undefined}>
+                {itemsInPcbVisualOrder(items.filter((item) => item.editorVisible !== false)).map((item) => (
+                  <g key={item.id} data-gerber-layer={objectListLayer(item)} pointerEvents={item.locked ? "none" : undefined}>
                     <ItemView
                       item={item}
                       selected={selection?.type === "item" && selection.id === item.id && !item.locked}
@@ -1368,6 +1457,23 @@ function PanelInspector({
       <NumberField label="Width" value={settings.widthMm} step={0.01} onChange={(widthMm) => updatePanel({ widthMm, hp: round(widthMm / 5.08) })} suffix="mm" />
       <NumberField label="Height" value={settings.heightMm} step={0.1} onChange={(heightMm) => updatePanel({ heightMm })} suffix="mm" />
       <NumberField label="Thickness" value={settings.thicknessMm} step={0.1} min={0.4} onChange={(thicknessMm) => updatePanel({ thicknessMm })} suffix="mm" />
+      <label className="color-row">
+        PCB colour
+        <input aria-label="PCB colour" type="color" value={settings.pcbColor ?? DEFAULT_PANEL.pcbColor} onChange={(event) => updatePanel({ pcbColor: event.target.value })} />
+      </label>
+      <div className="pcb-color-presets" aria-label="PCB colour presets">
+        {pcbColorOptions.map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            aria-label={`PCB colour ${option.label}`}
+            title={option.label}
+            className={(settings.pcbColor ?? DEFAULT_PANEL.pcbColor)?.toLowerCase() === option.color.toLowerCase() ? "active" : ""}
+            style={{ background: option.color }}
+            onClick={() => updatePanel({ pcbColor: option.color })}
+          />
+        ))}
+      </div>
       <NumberField label="Grid" value={settings.gridMm} step={0.01} min={0.1} onChange={(gridMm) => updatePanel({ gridMm })} suffix="mm" />
       <label className="toggle-row">
         <input type="checkbox" checked={settings.showMountingHoles} onChange={(event) => updatePanel({ showMountingHoles: event.target.checked })} />
@@ -1529,7 +1635,7 @@ function PanelThreePreview({
       bevelSegments: 2,
       curveSegments: 48,
     });
-    const panelMaterial = new THREE.MeshStandardMaterial({ color: "#f8fafc", roughness: 0.68, metalness: 0.02 });
+    const panelMaterial = new THREE.MeshStandardMaterial({ color: panelPcbColor(settings), roughness: 0.68, metalness: 0.02 });
     const panelMesh = new THREE.Mesh(panelGeometry, panelMaterial);
     panelMesh.castShadow = true;
     panelMesh.receiveShadow = true;
@@ -1549,10 +1655,6 @@ function PanelThreePreview({
 
     if (settings.showPcbArea !== false) {
       const area = pcbArea(settings);
-      const pcbMaterial = new THREE.MeshBasicMaterial({ color: "#64748b", transparent: true, opacity: 0.42, side: THREE.DoubleSide, depthWrite: false });
-      const pcbMesh = new THREE.Mesh(new THREE.PlaneGeometry(area.width, area.height), pcbMaterial);
-      pcbMesh.position.set(area.x + area.width / 2, area.y + area.height / 2, settings.thicknessMm + 0.12);
-      group.add(pcbMesh);
       addThreeLine(
         group,
         [
@@ -1567,8 +1669,9 @@ function PanelThreePreview({
       );
     }
 
-    for (const item of items.filter((entry) => isGraphicItem(entry) && entry.stlMode !== "cutout")) {
-      addThreeGraphic(group, item, layerColors, settings.thicknessMm, cutouts);
+    for (const item of itemsInPcbVisualOrder(items.filter((entry) => isGraphicItem(entry) && entry.stlMode !== "cutout"))) {
+      const placement = pcbThreeLayerPlacement(objectListLayer(item), settings.thicknessMm);
+      addThreeGraphic(group, item, layerColors, placement.zSurface, placement.outwardNormal, cutouts);
     }
 
     for (const cutout of cutouts) {
@@ -1675,8 +1778,7 @@ function PcbAreaOverlay({ settings }: { settings: PanelSettings }) {
       width={area.width}
       height={area.height}
       rx="0.8"
-      fill="#64748b"
-      fillOpacity="0.14"
+      fill="none"
       stroke="#64748b"
       strokeWidth="0.16"
       strokeDasharray="1 0.7"
@@ -1968,23 +2070,99 @@ function SelectField({
   );
 }
 
+type FontLoadState = "idle" | "loading" | "loaded" | "error";
+
 function FontPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const [localFontFamilies, setLocalFontFamilies] = useState<string[]>(() => sessionLocalFontFamilies);
+  const [fontSearch, setFontSearch] = useState("");
+  const [fontLoadState, setFontLoadState] = useState<FontLoadState>("idle");
+  const [fontLoadMessage, setFontLoadMessage] = useState("");
+  const localFontApiAvailable = typeof (window as WindowWithLocalFonts).queryLocalFonts === "function";
+  const availableFonts = useMemo(() => {
+    const builtInFamilies = new Set(fontOptions.map((option) => fontValueLabel(option.value).normalize("NFKC").toLocaleLowerCase()));
+    const localOptions = localFontFamilies
+      .filter((family) => !builtInFamilies.has(family.normalize("NFKC").toLocaleLowerCase()))
+      .map((family) => ({ value: cssLocalFontFamily(family), label: family }));
+    const options = [...fontOptions, ...localOptions];
+    if (!options.some((option) => option.value === value)) {
+      options.unshift({ value, label: fontValueLabel(value) });
+    }
+    return options;
+  }, [localFontFamilies, value]);
+  const visibleFonts = availableFonts.filter((option) => option.label.toLocaleLowerCase().includes(fontSearch.trim().toLocaleLowerCase()));
+
+  async function loadLocalFonts() {
+    const queryLocalFonts = (window as WindowWithLocalFonts).queryLocalFonts;
+    if (!queryLocalFonts) {
+      setFontLoadState("error");
+      setFontLoadMessage("Computer font access is available in desktop Chrome and Edge.");
+      return;
+    }
+
+    setFontLoadState("loading");
+    setFontLoadMessage("Waiting for font permission…");
+    try {
+      const fonts = await queryLocalFonts.call(window);
+      const families = uniqueLocalFontFamilies(fonts);
+      sessionLocalFontFamilies = families;
+      setLocalFontFamilies(families);
+      setFontLoadState("loaded");
+      setFontLoadMessage(
+        families.length === 1
+          ? "1 computer font family loaded"
+          : `${families.length} computer font families loaded`,
+      );
+    } catch (error) {
+      const denied = error instanceof DOMException && error.name === "NotAllowedError";
+      setFontLoadState("error");
+      setFontLoadMessage(denied ? "Computer font access was not granted." : "Could not read fonts from this computer.");
+    }
+  }
+
   return (
     <div className="field-row font-picker-row">
       <span>Font</span>
-      <div className="font-picker" role="radiogroup" aria-label="Font">
-        {fontOptions.map((option) => (
-          <button
-            type="button"
-            key={option.value}
-            className={value === option.value ? "active" : ""}
-            aria-pressed={value === option.value}
-            onClick={() => onChange(option.value)}
-            style={{ fontFamily: option.value }}
-          >
-            {option.label}
-          </button>
-        ))}
+      <div className="font-picker-panel">
+        <button
+          type="button"
+          className="font-access-button"
+          onClick={() => void loadLocalFonts()}
+          disabled={fontLoadState === "loading" || !localFontApiAvailable}
+          title={localFontApiAvailable ? "Allow access to fonts installed on this computer" : "Requires desktop Chrome or Edge"}
+        >
+          {fontLoadState === "loading" ? "Loading fonts…" : localFontFamilies.length ? "Reload computer fonts" : "Load computer fonts"}
+        </button>
+        {!localFontApiAvailable && <small className="font-access-note">Available in desktop Chrome and Edge.</small>}
+        {fontLoadMessage && (
+          <small className={`font-access-note ${fontLoadState === "error" ? "error" : ""}`} role="status">
+            {fontLoadMessage}
+          </small>
+        )}
+        {localFontFamilies.length > 0 && (
+          <input
+            className="font-search"
+            type="search"
+            aria-label="Search fonts"
+            placeholder="Search computer fonts"
+            value={fontSearch}
+            onChange={(event) => setFontSearch(event.target.value)}
+          />
+        )}
+        <div className="font-picker" role="radiogroup" aria-label="Font">
+          {visibleFonts.map((option) => (
+            <button
+              type="button"
+              key={option.value}
+              className={value === option.value ? "active" : ""}
+              aria-pressed={value === option.value}
+              onClick={() => onChange(option.value)}
+              style={{ fontFamily: option.value }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        {localFontFamilies.length > 0 && visibleFonts.length === 0 && <small className="font-access-note">No fonts match that search.</small>}
       </div>
     </div>
   );
@@ -2138,7 +2316,7 @@ function ItemView({
               filter={tintSvgArtwork ? `url(#${tintFilterId})` : undefined}
             />
           ) : (
-            <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill={color} fillOpacity="0.16" stroke={color} strokeWidth="0.18" />
+            <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill={color} fillOpacity={manufacturingFillOpacity(item, 0.16)} stroke={color} strokeWidth="0.18" />
           )}
           <rect x={item.x - width / 2} y={item.y - height / 2} width={width} height={height} fill="none" stroke={selected ? "#e58614" : color} strokeWidth="0.22" strokeDasharray="1 0.8" />
           <CutoutCue item={item} color={color} />
@@ -2188,7 +2366,7 @@ function ItemView({
     const radius = (item.diameter ?? 8) / 2;
     return (
       <g className={`item-view vector ${selected ? "selected" : ""}`} onPointerDown={onPointerDown} transform={transform}>
-        <circle cx={item.x} cy={item.y} r={radius} fill={item.filled ? color : "none"} fillOpacity={item.filled ? 0.14 : undefined} stroke={color} strokeWidth={item.strokeWidth ?? 0.24} />
+        <circle cx={item.x} cy={item.y} r={radius} fill={item.filled ? color : "none"} fillOpacity={item.filled ? manufacturingFillOpacity(item, 0.14) : undefined} stroke={color} strokeWidth={item.strokeWidth ?? 0.24} />
         <CutoutCue item={item} color={color} />
         {selected && <circle cx={item.x} cy={item.y} r={radius + 1.1} fill="none" stroke="#e58614" strokeWidth="0.18" strokeDasharray="1 0.8" />}
         {selected && <circle className="resize-handle" cx={item.x + radius} cy={item.y} r="0.95" fill="#e58614" onPointerDown={(event) => onResizePointerDown(event, item)} />}
@@ -2207,7 +2385,7 @@ function ItemView({
           width={width}
           height={height}
           fill={item.filled ? color : "none"}
-          fillOpacity={item.filled ? 0.14 : undefined}
+          fillOpacity={item.filled ? manufacturingFillOpacity(item, 0.14) : undefined}
           stroke={color}
           strokeWidth={item.strokeWidth ?? 0.24}
         />
@@ -2248,7 +2426,7 @@ function ItemView({
         <path
           d={`${d}${item.closed ? " Z" : ""}`}
           fill={item.closed && item.filled ? color : "none"}
-          fillOpacity={item.closed && item.filled ? 0.16 : undefined}
+          fillOpacity={item.closed && item.filled ? manufacturingFillOpacity(item, 0.16) : undefined}
           stroke={color}
           strokeWidth={item.strokeWidth ?? 0.24}
           strokeLinecap="round"
@@ -2407,6 +2585,13 @@ function itemDisplayColor(item: PanelItem, layerColors: Record<GerberTargetLayer
   return layerColors[item.gerberLayer ?? "frontSilk"];
 }
 
+function itemsInPcbVisualOrder(items: PanelItem[]) {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => pcbVisualLayerOrder[objectListLayer(a.item)] - pcbVisualLayerOrder[objectListLayer(b.item)] || a.index - b.index)
+    .map(({ item }) => item);
+}
+
 function itemCueBounds(item: PanelItem, local = false) {
   if (item.kind === "text") {
     const width = Math.max((item.text ?? item.label).length * (item.fontSize ?? 4) * 0.62, item.fontSize ?? 4);
@@ -2469,6 +2654,10 @@ function pcbArea(settings: PanelSettings) {
   };
 }
 
+function panelPcbColor(settings: PanelSettings) {
+  return settings.pcbColor ?? DEFAULT_PANEL.pcbColor ?? "#0f7b55";
+}
+
 function createPanelThreeShape(settings: PanelSettings, cutouts: ThreeCutoutShape[]) {
   const shape = new THREE.Shape();
   shape.moveTo(0, 0);
@@ -2505,102 +2694,106 @@ function threeCutoutShapes(settings: PanelSettings, items: PanelItem[]): ThreeCu
   return [...physical, ...graphics];
 }
 
-function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Record<GerberTargetLayer, string>, zTop: number, cutouts: ThreeCutoutShape[]) {
+function manufacturingFillOpacity(item: PanelItem, designOpacity: number) {
+  return objectListLayer(item) === "none" ? designOpacity : 1;
+}
+
+function addThreeGraphic(group: THREE.Group, item: PanelItem, layerColors: Record<GerberTargetLayer, string>, zTop: number, outwardNormal: number, cutouts: ThreeCutoutShape[]) {
   const color = itemDisplayColor(item, layerColors);
   if (item.stlMode === "reveal") {
-    addThreeRevealGraphic(group, item, color, zTop);
+    addThreeRevealGraphic(group, item, color, zTop, outwardNormal);
     return;
   }
   const relief = Math.max(item.reliefHeight ?? 0.4, 0.04);
   const material = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: item.gerberLayer?.includes("Copper") ? 0.35 : 0.05 });
 
   if (item.kind === "text") {
-    addThreeText(group, item, color, zTop + relief + 0.08);
+    addThreeText(group, item, color, zTop + outwardNormal * (relief + 0.08));
     return;
   }
 
   if (item.kind === "artwork") {
     if (hasArtworkTrace(item)) {
       for (const path of artworkTracePathsForItem(item)) {
-        addThreeRaisedShape(group, shapeFromPoints(path, false), material, zTop, relief, cutouts);
+        addThreeRaisedShape(group, shapeFromPoints(path, false), material, zTop, relief, outwardNormal, cutouts);
       }
       return;
     }
-    addThreeRaisedShape(group, shapeFromPoints(rectPointsForItem(item), false), material, zTop, relief, cutouts);
+    addThreeRaisedShape(group, shapeFromPoints(rectPointsForItem(item), false), material, zTop, relief, outwardNormal, cutouts);
     return;
   }
 
   if (item.kind === "vector-circle") {
     const shape = circleThreeShape(item.x, item.y, (item.diameter ?? 8) / 2, false);
-    if (item.filled) addThreeRaisedShape(group, shape, material, zTop, relief, cutouts);
-    else addThreeLine(group, circlePoints(item.x, item.y, (item.diameter ?? 8) / 2, 64), color, zTop + relief + 0.08, true);
+    if (item.filled) addThreeRaisedShape(group, shape, material, zTop, relief, outwardNormal, cutouts);
+    else addThreeLine(group, circlePoints(item.x, item.y, (item.diameter ?? 8) / 2, 64), color, zTop + outwardNormal * (relief + 0.08), true);
     return;
   }
 
   if (item.kind === "vector-rect") {
     const points = rectPointsForItem(item);
-    if (item.filled) addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief, cutouts);
-    else addThreeLine(group, points, color, zTop + relief + 0.08, true);
+    if (item.filled) addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief, outwardNormal, cutouts);
+    else addThreeLine(group, points, color, zTop + outwardNormal * (relief + 0.08), true);
     return;
   }
 
   if (item.kind === "vector-line" || item.kind === "vector-path") {
     const points = absoluteVectorPointsForApp(item);
     if (item.kind === "vector-path" && item.closed && item.filled && points.length > 2) {
-      addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief, cutouts);
+      addThreeRaisedShape(group, shapeFromPoints(points, false), material, zTop, relief, outwardNormal, cutouts);
     } else {
-      addThreeLine(group, points, color, zTop + relief + 0.08, item.closed ?? false);
+      addThreeLine(group, points, color, zTop + outwardNormal * (relief + 0.08), item.closed ?? false);
     }
   }
 }
 
-function addThreeRevealGraphic(group: THREE.Group, item: PanelItem, color: string, zTop: number) {
+function addThreeRevealGraphic(group: THREE.Group, item: PanelItem, color: string, zTop: number, outwardNormal: number) {
   const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false });
-  const z = zTop + 0.07;
+  const z = zTop + outwardNormal * 0.07;
 
   if (item.kind === "text") {
-    addThreeText(group, item, color, z + 0.02);
+    addThreeText(group, item, color, z + outwardNormal * 0.02);
     return;
   }
 
   if (item.kind === "artwork") {
     if (hasArtworkTrace(item)) {
-      for (const path of artworkTracePathsForItem(item)) addThreeFlatShape(group, shapeFromPoints(path, false), material, z);
+      for (const path of artworkTracePathsForItem(item)) addThreeFlatShape(group, shapeFromPoints(path, false), material, z, outwardNormal);
       return;
     }
-    addThreeFlatShape(group, shapeFromPoints(rectPointsForItem(item), false), material, z);
+    addThreeFlatShape(group, shapeFromPoints(rectPointsForItem(item), false), material, z, outwardNormal);
     return;
   }
 
   if (item.kind === "vector-circle") {
     const radius = (item.diameter ?? 8) / 2;
-    if (item.filled) addThreeFlatShape(group, circleThreeShape(item.x, item.y, radius, false), material, z);
-    else addThreeLine(group, circlePoints(item.x, item.y, radius, 64), color, z + 0.02, true);
+    if (item.filled) addThreeFlatShape(group, circleThreeShape(item.x, item.y, radius, false), material, z, outwardNormal);
+    else addThreeLine(group, circlePoints(item.x, item.y, radius, 64), color, z + outwardNormal * 0.02, true);
     return;
   }
 
   if (item.kind === "vector-rect") {
     const points = rectPointsForItem(item);
-    if (item.filled) addThreeFlatShape(group, shapeFromPoints(points, false), material, z);
-    else addThreeLine(group, points, color, z + 0.02, true);
+    if (item.filled) addThreeFlatShape(group, shapeFromPoints(points, false), material, z, outwardNormal);
+    else addThreeLine(group, points, color, z + outwardNormal * 0.02, true);
     return;
   }
 
   if (item.kind === "vector-line" || item.kind === "vector-path") {
     const points = absoluteVectorPointsForApp(item);
-    if (item.kind === "vector-path" && item.closed && item.filled && points.length > 2) addThreeFlatShape(group, shapeFromPoints(points, false), material, z);
-    else addThreeLine(group, points, color, z + 0.02, item.closed ?? false);
+    if (item.kind === "vector-path" && item.closed && item.filled && points.length > 2) addThreeFlatShape(group, shapeFromPoints(points, false), material, z, outwardNormal);
+    else addThreeLine(group, points, color, z + outwardNormal * 0.02, item.closed ?? false);
   }
 }
 
-function addThreeFlatShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, z: number) {
+function addThreeFlatShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, z: number, outwardNormal: number) {
   const geometry = new THREE.ShapeGeometry(shape);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.z = z;
   group.add(mesh);
-  addThreeShapeOutline(group, shape, "#0f172a", z + 0.01, 0.16);
+  addThreeShapeOutline(group, shape, "#0f172a", z + outwardNormal * 0.01, 0.16);
 }
-function addThreeRaisedShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, zTop: number, relief: number, cutouts: ThreeCutoutShape[]) {
+function addThreeRaisedShape(group: THREE.Group, shape: THREE.Shape, material: THREE.Material, zTop: number, relief: number, outwardNormal: number, cutouts: ThreeCutoutShape[]) {
   const raisedShape = shapeWithNestedCutouts(shape, cutouts);
   const geometry = new THREE.ExtrudeGeometry(raisedShape, {
     depth: relief,
@@ -2608,7 +2801,8 @@ function addThreeRaisedShape(group: THREE.Group, shape: THREE.Shape, material: T
     curveSegments: 32,
   });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.z = zTop + 0.04;
+  mesh.position.z = zTop + outwardNormal * 0.04;
+  mesh.scale.z = outwardNormal;
   mesh.castShadow = true;
   group.add(mesh);
 }
@@ -2825,6 +3019,115 @@ function traceModeLabel(mode: TraceMode) {
   return traceModeOptions.find((option) => option.value === mode)?.label ?? "Auto";
 }
 
+async function traceSvgForFabrication(imageUrl: string) {
+  return traceImageToArtwork(imageUrl, {
+    mode: "alpha",
+    detail: FABRICATION_TRACE_DETAIL,
+    allowUpscale: true,
+  }).catch(() => null);
+}
+
+async function upgradeSvgFabricationTrace(item: PanelItem): Promise<PanelItem> {
+  if (item.kind !== "artwork" || !item.imageUrl?.startsWith("data:image/svg")) return item;
+  if (hasArtworkTrace(item) && (item.artworkTrace.detail ?? 0) >= FABRICATION_TRACE_DETAIL) return item;
+  const trace = await traceSvgForFabrication(item.imageUrl);
+  if (!trace?.paths.length) return item;
+  return {
+    ...item,
+    artworkTrace: trace,
+    filled: true,
+  };
+}
+
+async function prepareTextForGerber(items: PanelItem[]) {
+  const prepared: PanelItem[] = [];
+  for (const item of items) {
+    prepared.push(await textItemForGerber(item));
+  }
+  return prepared;
+}
+
+async function textItemForGerber(item: PanelItem): Promise<PanelItem> {
+  const text = item.text ?? "";
+  if (item.kind !== "text" || !text.trim()) return item;
+
+  const fontSizeMm = item.fontSize ?? 4;
+  const fontFamily = item.fontFamily ?? fontOptions[0].value;
+  const font = `${item.fontStyle === "italic" ? "italic " : ""}${item.fontWeight ?? 720} ${fontSizeMm}px ${fontFamily}`;
+  await document.fonts.load(font, text).catch(() => []);
+
+  const namespace = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(namespace, "svg");
+  const textElement = document.createElementNS(namespace, "text");
+  textElement.setAttribute("x", "0");
+  textElement.setAttribute("y", "0");
+  textElement.setAttribute("text-anchor", "middle");
+  textElement.setAttribute("dominant-baseline", "middle");
+  textElement.setAttribute("font-family", fontFamily);
+  textElement.setAttribute("font-size", String(fontSizeMm));
+  textElement.setAttribute("font-weight", String(item.fontWeight ?? 720));
+  textElement.setAttribute("font-style", item.fontStyle ?? "normal");
+  textElement.setAttribute("fill", "#000000");
+  textElement.textContent = text;
+  svg.append(textElement);
+  svg.style.position = "absolute";
+  svg.style.left = "-10000px";
+  svg.style.top = "-10000px";
+  svg.style.overflow = "visible";
+  document.body.append(svg);
+
+  let bounds: DOMRect;
+  try {
+    bounds = textElement.getBBox();
+  } finally {
+    svg.remove();
+  }
+
+  const paddingMm = Math.max(fontSizeMm * 0.08, 0.05);
+  const halfWidth = Math.max(Math.abs(bounds.x), Math.abs(bounds.x + bounds.width)) + paddingMm;
+  const halfHeight = Math.max(Math.abs(bounds.y), Math.abs(bounds.y + bounds.height)) + paddingMm;
+  if (![halfWidth, halfHeight].every(Number.isFinite) || halfWidth <= 0 || halfHeight <= 0) return item;
+
+  const emPixels = 320;
+  const pixelsPerMm = emPixels / fontSizeMm;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(halfWidth * 2 * pixelsPerMm));
+  canvas.height = Math.max(1, Math.ceil(halfHeight * 2 * pixelsPerMm));
+  const context = canvas.getContext("2d");
+  if (!context) return item;
+  const rasterFont = `${item.fontStyle === "italic" ? "italic " : ""}${item.fontWeight ?? 720} ${emPixels}px ${fontFamily}`;
+  await document.fonts.load(rasterFont, text).catch(() => []);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#000000";
+  context.font = rasterFont;
+  context.textAlign = "center";
+  context.textBaseline = "alphabetic";
+  const rasterMetrics = context.measureText(text);
+  const targetTop = canvas.height / 2 + bounds.y * pixelsPerMm;
+  const baseline = targetTop + (rasterMetrics.actualBoundingBoxAscent || emPixels * 0.8);
+  context.fillText(text, canvas.width / 2, baseline);
+
+  const widthMm = canvas.width / pixelsPerMm;
+  const heightMm = canvas.height / pixelsPerMm;
+  const imageUrl = canvas.toDataURL("image/png");
+  const trace = await traceImageToArtwork(imageUrl, {
+    mode: "alpha",
+    detail: FABRICATION_TRACE_DETAIL,
+    allowUpscale: true,
+  }).catch(() => null);
+  if (!trace?.paths.length) return item;
+
+  return {
+    ...item,
+    kind: "artwork",
+    width: widthMm,
+    height: heightMm,
+    imageUrl,
+    artworkTrace: trace,
+    filled: true,
+  };
+}
+
 function clonePanelItem(item: PanelItem): PanelItem {
   return {
     ...item,
@@ -2890,7 +3193,7 @@ async function expandGerberFiles(files: File[]): Promise<GerberImportPayload[]> 
 }
 
 function isGerberImportName(name: string) {
-  return /\.(gbr|ger|gtl|gbl|gto|gbo|gm1|gko|drl|xln|txt|dxf)$/i.test(name);
+  return /\.(gbr|ger|gtl|gbl|gto|gbo|gts|gbs|gm1|gko|drl|xln|txt|dxf)$/i.test(name);
 }
 
 function clamp(value: number, min: number, max: number) {

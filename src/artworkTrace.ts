@@ -4,7 +4,8 @@ const TRACE_MAX_DIMENSION = 128;
 const TRACE_THRESHOLD = 154;
 const TRACE_ALPHA_THRESHOLD = 32;
 const TRACE_MIN_DETAIL = 32;
-const TRACE_MAX_DETAIL = 512;
+export const FABRICATION_TRACE_DETAIL = 2048;
+const TRACE_MAX_DETAIL = FABRICATION_TRACE_DETAIL;
 
 export type TraceImageOptions = {
   mode?: TraceMode;

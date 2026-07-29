@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import JSZip from "jszip";
 
 test("exports fabrication-ready SVG silk, PCB reveal, and drill files", async ({ page }) => {
   await page.goto("/");
@@ -28,22 +29,30 @@ test("exports fabrication-ready SVG silk, PCB reveal, and drill files", async ({
   await revealRow.click();
   await page.getByLabel("Gerber", { exact: true }).selectOption("frontReveal");
 
-  const downloads: import("@playwright/test").Download[] = [];
-  page.on("download", (download) => downloads.push(download));
+  const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export Gerber and drill" }).click();
-  await expect.poll(() => downloads.length).toBe(8);
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("eurorack-panel-gerbers.zip");
 
-  const files = new Map<string, string>();
-  for (const download of downloads) {
-    const path = await download.path();
-    if (!path) throw new Error(`No path for ${download.suggestedFilename()}`);
-    files.set(download.suggestedFilename(), await readFile(path, "utf8"));
-  }
+  const path = await download.path();
+  if (!path) throw new Error("No path for Gerber ZIP");
+  const zip = await JSZip.loadAsync(await readFile(path));
+  const readZipText = async (name: string) => (await zip.file(name)?.async("string")) ?? "";
 
-  const outline = files.get("eurorack-panel-Edge_Cuts.gbr") ?? "";
-  const frontMask = files.get("eurorack-panel-F_Mask.gbr") ?? "";
-  const frontSilk = files.get("eurorack-panel-F_Silk.gbr") ?? "";
-  const drill = files.get("eurorack-panel.drl") ?? "";
+  expect(Object.keys(zip.files).sort()).toEqual([
+    "eurorack-panel.GBL",
+    "eurorack-panel.GBO",
+    "eurorack-panel.GBS",
+    "eurorack-panel.GKO",
+    "eurorack-panel.GTL",
+    "eurorack-panel.GTO",
+    "eurorack-panel.GTS",
+    "eurorack-panel.XLN",
+  ]);
+  const outline = await readZipText("eurorack-panel.GKO");
+  const frontMask = await readZipText("eurorack-panel.GTS");
+  const frontSilk = await readZipText("eurorack-panel.GTO");
+  const drill = await readZipText("eurorack-panel.XLN");
 
   expect(outline).toContain("%TF.FileFunction,Profile,NP*%");
   expect(frontMask).toContain("%TF.FileFunction,Soldermask,Top*%");
@@ -51,7 +60,8 @@ test("exports fabrication-ready SVG silk, PCB reveal, and drill files", async ({
   expect(frontMask).not.toContain("%ADD11R");
   expect(frontSilk).toContain("%TF.FileFunction,Legend,Top*%");
   expect(frontSilk).toContain("G36*");
-  expect(drill).toContain(";FILE_FORMAT=3:3");
+  expect(drill).toMatch(/^METRIC$/m);
+  expect(drill).not.toContain("METRIC,TZ");
   expect(drill).toContain("; #@! TF.FileFunction,NonPlated,1,2,NPTH");
-  expect(drill).toMatch(/^X\d+Y\d+$/m);
+  expect(drill).toMatch(/^X\d+\.\d{3}Y\d+\.\d{3}$/m);
 });

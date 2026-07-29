@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readdirSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 
-const supported = new Set([".gbr", ".ger", ".gtl", ".gbl", ".gto", ".gbo", ".gko", ".gm1", ".drl", ".xln", ".dxf", ".zip"]);
+const supported = new Set([".gbr", ".ger", ".gtl", ".gbl", ".gto", ".gbo", ".gts", ".gbs", ".gko", ".gm1", ".drl", ".xln", ".dxf", ".zip"]);
 
 test("imports real Gerber and drill files through the app UI", async ({ page }) => {
   const target = process.env.GERBER_IMPORT_TARGET;

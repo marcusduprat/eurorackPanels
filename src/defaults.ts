@@ -12,6 +12,7 @@ export const DEFAULT_PANEL: PanelSettings = {
   showPcbArea: true,
   pcbInsetX: 5,
   pcbInsetY: 8,
+  pcbColor: "#0f7b55",
   gridMm: 2.54,
 };
 

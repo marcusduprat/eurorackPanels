@@ -111,6 +111,7 @@ export type PanelSettings = {
   showPcbArea?: boolean;
   pcbInsetX?: number;
   pcbInsetY?: number;
+  pcbColor?: string;
   gridMm: number;
 };
 
