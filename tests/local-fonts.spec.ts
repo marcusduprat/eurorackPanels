@@ -76,7 +76,7 @@ test("loads installed font families and applies one to selected text", async ({ 
   const editorInkCenterX = (editorBounds.minX + editorBounds.maxX) / 2;
   const gerberInkCenterX = (gerberBounds.minX + gerberBounds.maxX) / 2;
   expect(gerberInkCenterX - 30.48).toBeCloseTo(editorInkCenterX - 30.48, 1);
-  expect(Math.abs((gerberBounds.minY - 13) - (editorBounds.minY - 13))).toBeLessThan(0.25);
+  expect(Math.abs((project.settings.heightMm - gerberBounds.maxY) - editorBounds.minY)).toBeLessThan(0.25);
 });
 
 test("explains when the browser cannot enumerate computer fonts", async ({ page }) => {

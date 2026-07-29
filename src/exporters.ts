@@ -434,8 +434,8 @@ function gerberGeometryBody(items: PanelItem[], settings: PanelSettings) {
 function gerberSegmentBody(segments: Array<[Point2, Point2]>, settings: PanelSettings) {
   return segments
     .map(
-      ([start, end]) => `X${g(clampMm(start[0], settings.widthMm))}Y${g(clampMm(start[1], settings.heightMm))}D02*
-X${g(clampMm(end[0], settings.widthMm))}Y${g(clampMm(end[1], settings.heightMm))}D01*`,
+      ([start, end]) => `X${g(clampMm(start[0], settings.widthMm))}Y${g(boardY(start[1], settings.heightMm))}D02*
+X${g(clampMm(end[0], settings.widthMm))}Y${g(boardY(end[1], settings.heightMm))}D01*`,
     )
     .join("\n");
 }
@@ -446,10 +446,10 @@ function gerberRegionBody(regions: Point2[][], settings: PanelSettings) {
     .map((points) => {
       const first = points[0];
       const draws = [...points.slice(1), first]
-        .map((point) => `X${g(clampMm(point[0], settings.widthMm))}Y${g(clampMm(point[1], settings.heightMm))}D01*`)
+        .map((point) => `X${g(clampMm(point[0], settings.widthMm))}Y${g(boardY(point[1], settings.heightMm))}D01*`)
         .join("\n");
       return `G36*
-X${g(clampMm(first[0], settings.widthMm))}Y${g(clampMm(first[1], settings.heightMm))}D02*
+X${g(clampMm(first[0], settings.widthMm))}Y${g(boardY(first[1], settings.heightMm))}D02*
 ${draws}
 G37*`;
     })
@@ -458,20 +458,15 @@ G37*`;
 
 function itemDrawsOnGerberLayer(item: PanelItem, layer: GerberGraphicLayer) {
   const target = item.gerberLayer ?? defaultGerberLayer(item);
-  if (target === "frontReveal") return layer === "frontMask";
-  if (target === "backReveal") return layer === "backMask";
+  if (item.stlMode === "reveal" || target === "frontReveal" || target === "backReveal") {
+    return layer === "frontMask" || layer === "backMask";
+  }
   return target === layer;
 }
 
 function revealClearsLayer(item: PanelItem, layer: GerberGraphicLayer) {
   if (item.stlMode !== "reveal") return false;
-  const baseLayer = revealBaseLayer(item.gerberLayer ?? defaultGerberLayer(item));
-  if (baseLayer === "frontMask") return layer === "frontCopper" || layer === "frontSilk";
-  return layer === "backCopper" || layer === "backSilk";
-}
-
-function revealBaseLayer(layer: GerberTargetLayer): "frontMask" | "backMask" {
-  return layer === "backMask" || layer === "backCopper" || layer === "backSilk" || layer === "backReveal" ? "backMask" : "frontMask";
+  return layer === "frontCopper" || layer === "frontSilk" || layer === "backCopper" || layer === "backSilk";
 }
 export function createDrill(settings: PanelSettings, items: PanelItem[]) {
   const holes = panelHoles(settings, items);
@@ -498,7 +493,7 @@ export function createDrill(settings: PanelSettings, items: PanelItem[]) {
   sizes.forEach((size, index) => {
     body.push(`T${String(index + 1).padStart(2, "0")}`);
     for (const hole of groups.get(size) ?? []) {
-      body.push(`X${drill(hole.x)}Y${drill(hole.y)}`);
+      body.push(`X${drill(hole.x)}Y${drill(boardY(hole.y, settings.heightMm))}`);
     }
   });
 
@@ -911,6 +906,10 @@ function textSegments(item: PanelItem): Array<[Point2, Point2]> {
 
 function clampMm(value: number, max: number) {
   return Math.min(max, Math.max(0, value));
+}
+
+function boardY(editorY: number, panelHeight: number) {
+  return panelHeight - clampMm(editorY, panelHeight);
 }
 
 function addDxfLine(entities: string[], x1: number, y1: number, x2: number, y2: number) {

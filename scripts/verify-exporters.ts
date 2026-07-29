@@ -39,6 +39,9 @@ const revealStl = createStl(DEFAULT_PANEL, revealItems);
 const revealFrontBase = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "frontMask");
 const revealFrontCopper = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "frontCopper");
 const revealFrontSilk = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "frontSilk");
+const revealBackBaseFromFrontReveal = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "backMask");
+const revealBackCopperFromFrontReveal = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "backCopper");
+const revealBackSilkFromFrontReveal = createGerberGraphicLayer(DEFAULT_PANEL, revealItems, "backSilk");
 const backRevealItems = revealItems.map((item) => ({
   ...item,
   id: "pcb-reveal-back",
@@ -83,6 +86,34 @@ const tracedArtworkItems = [
 const tracedSvg = createSvg(DEFAULT_PANEL, tracedArtworkItems);
 const tracedGerber = createGerberGraphicLayer(DEFAULT_PANEL, tracedArtworkItems, "frontSilk");
 const tracedStl = createStl(DEFAULT_PANEL, tracedArtworkItems);
+const orientedGraphic = createGerberGraphicLayer(
+  DEFAULT_PANEL,
+  [
+    {
+      id: "orientation-marker",
+      kind: "vector-rect",
+      label: "Orientation marker",
+      x: 12,
+      y: 20,
+      width: 4,
+      height: 6,
+      filled: true,
+      stlMode: "raised",
+      gerberLayer: "frontSilk",
+    },
+  ],
+  "frontSilk",
+);
+const orientedDrill = createDrill(DEFAULT_PANEL, [
+  {
+    id: "orientation-hole",
+    kind: "hole",
+    label: "Orientation hole",
+    x: 12,
+    y: 20,
+    diameter: 3,
+  },
+]);
 
 const untracedArtworkGerber = createGerberGraphicLayer(
   DEFAULT_PANEL,
@@ -121,6 +152,9 @@ assert(revealFrontBase.includes("%TF.FileFunction,Soldermask,Top*%") && revealFr
 assert(!revealFrontBase.includes("%LPC*%"), "PCB reveal mask opening should use positive polarity");
 assert(revealFrontCopper.includes("%LPC*%") && revealFrontCopper.includes("G36*"), "PCB reveal should clear a solid region from front copper");
 assert(revealFrontSilk.includes("%LPC*%") && revealFrontSilk.includes("G36*"), "PCB reveal should clear a solid region from front silk");
+assert(revealBackBaseFromFrontReveal.includes("G36*"), "PCB reveal should create the same opening in the back mask");
+assert(revealBackCopperFromFrontReveal.includes("%LPC*%") && revealBackCopperFromFrontReveal.includes("G36*"), "PCB reveal should clear the matching region from back copper");
+assert(revealBackSilkFromFrontReveal.includes("%LPC*%") && revealBackSilkFromFrontReveal.includes("G36*"), "PCB reveal should clear the matching region from back silk");
 assert(revealBackBase.includes("%TF.FileFunction,Soldermask,Bot*%") && revealBackBase.includes("G36*"), "Back PCB reveal should create a solid back-mask opening");
 assert(revealBackCopper.includes("%LPC*%") && revealBackCopper.includes("G36*"), "Back PCB reveal should clear a solid region from back copper");
 assert(revealBackSilk.includes("%LPC*%") && revealBackSilk.includes("G36*"), "Back PCB reveal should clear a solid region from back silk");
@@ -128,6 +162,8 @@ assert(tracedSvg.includes("<path") && !tracedSvg.includes("<image"), "Traced art
 assert(parseGerber(tracedGerber).length > 0, "Traced artwork Gerber export missing vector strokes");
 assert(!untracedArtworkGerber.includes("D01*") && !untracedArtworkGerber.includes("G36*"), "Untraced artwork must not export its rectangular bounds to Gerber");
 assert(tracedStl.includes("facet normal") && !tracedStl.includes("NaN"), "Traced artwork STL export produced invalid geometry");
+assert(orientedGraphic.includes("X10000000Y111500000D02*") && orientedGraphic.includes("Y105500000"), "Gerber graphics must convert top-down editor Y coordinates to bottom-up board coordinates");
+assert(orientedDrill.includes("X12.000Y108.500"), "Drill coordinates must use the same bottom-up board orientation as Gerber graphics");
 
 const parsedGerber = parseGerber(`%FSLAX46Y46*%
 %MOMM*%

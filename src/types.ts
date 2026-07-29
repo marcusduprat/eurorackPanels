@@ -12,6 +12,7 @@ export type VectorPoint = {
 export type TraceMode = "auto" | "dark" | "light" | "alpha";
 
 export type ArtworkTrace = {
+  version?: number;
   sourceWidth: number;
   sourceHeight: number;
   gridWidth: number;

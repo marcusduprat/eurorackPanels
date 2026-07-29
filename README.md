@@ -16,13 +16,13 @@ Open `http://127.0.0.1:5173`.
 - Set Eurorack panel HP, width, height, thickness, grid, and mounting-hole positions.
 - Import PCB Gerbers, Excellon drill files, and DXF drawings as translucent alignment layers.
 - Import Gerber ZIP bundles directly.
-- Import PNG, JPG, and WebP artwork; named top-level SVG layers import as separate, aligned panel objects with high-detail fabrication traces.
-- Preview the whole board in standard PCB colours with mask, silk, copper, and reveal objects rendered in manufacturing order.
+- Import PNG, JPG, and WebP artwork; named top-level SVG layers import as separate, aligned panel objects with smooth 2048-detail fabrication contours. Older saved SVG traces rebuild automatically when loaded.
+- Preview the whole board in standard PCB colours with mask, silk, copper, and two-sided PCB reveal objects rendered in manufacturing order.
 - Tint imported SVG artwork with its object-layer color, and lock or hide objects while arranging overlaps.
 - Place and edit pots, jacks, holes, labels, and artwork in millimeters.
 - Load, search, and use fonts installed on the computer in desktop Chrome or Edge; Gerber export converts selected text to high-detail filled geometry.
 - Save/load project JSON.
-- Export SVG, DXF, a JLCPCB-friendly ZIP of Protel-named Gerber layers plus decimal Excellon drill data, and STL for 3D printing.
+- Export SVG, DXF, a JLCPCB-friendly ZIP of correctly oriented Protel-named Gerber layers plus matching decimal Excellon drill data, and STL for 3D printing.
 
 ## Checks
 

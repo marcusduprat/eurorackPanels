@@ -40,7 +40,7 @@ import {
 import { memo, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import JSZip from "jszip";
 import * as THREE from "three";
-import { artworkTracePathsForItem, FABRICATION_TRACE_DETAIL, hasArtworkTrace, traceImageToArtwork, type TraceImageOptions } from "./artworkTrace";
+import { ARTWORK_TRACE_VERSION, artworkTracePathsForItem, FABRICATION_TRACE_DETAIL, hasArtworkTrace, traceImageToArtwork, type TraceImageOptions } from "./artworkTrace";
 import { DEFAULT_PANEL, LAYER_COLORS, SAMPLE_ITEMS, SAMPLE_LAYERS } from "./defaults";
 import {
   createDrill,
@@ -95,11 +95,10 @@ const gerberTargetOptions: Array<{ value: GerberTargetLayer; label: string }> = 
   { value: "frontMask", label: "Front mask opening" },
   { value: "frontSilk", label: "Front silk" },
   { value: "frontCopper", label: "Front copper" },
-  { value: "frontReveal", label: "Front PCB reveal" },
+  { value: "frontReveal", label: "PCB reveal (front + back)" },
   { value: "backMask", label: "Back mask opening" },
   { value: "backSilk", label: "Back silk" },
   { value: "backCopper", label: "Back copper" },
-  { value: "backReveal", label: "Back PCB reveal" },
 ];
 
 const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; color: string }> = [
@@ -107,14 +106,16 @@ const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; colo
   { value: "frontMask", label: "Front mask opening", color: "#d6b56c" },
   { value: "frontCopper", label: "Front copper", color: "#c47a32" },
   { value: "frontSilk", label: "Front silk", color: "#f8fafc" },
-  { value: "frontReveal", label: "Front PCB reveal", color: "#d6b56c" },
+  { value: "frontReveal", label: "PCB reveal (front + back)", color: "#d6b56c" },
   { value: "backMask", label: "Back mask opening", color: "#c6a45d" },
   { value: "backCopper", label: "Back copper", color: "#b86f2c" },
   { value: "backSilk", label: "Back silk", color: "#e2e8f0" },
-  { value: "backReveal", label: "Back PCB reveal", color: "#c6a45d" },
 ];
 
-const defaultObjectLayerColors = Object.fromEntries(objectLayerSections.map((section) => [section.value, section.color])) as Record<GerberTargetLayer, string>;
+const defaultObjectLayerColors = {
+  ...Object.fromEntries(objectLayerSections.map((section) => [section.value, section.color])),
+  backReveal: "#d6b56c",
+} as Record<GerberTargetLayer, string>;
 
 const pcbVisualLayerOrder: Record<GerberTargetLayer, number> = {
   backMask: 10,
@@ -998,7 +999,8 @@ function App() {
     };
     const importedItems: PanelItem[] = [];
     for (const item of parsed.items ?? []) {
-      importedItems.push(await upgradeSvgFabricationTrace(item));
+      const normalizedItem = item.gerberLayer === "backReveal" ? { ...item, gerberLayer: "frontReveal" as const } : item;
+      importedItems.push(await upgradeSvgFabricationTrace(normalizedItem));
     }
     pushHistory();
     setSettings({ ...DEFAULT_PANEL, ...parsed.settings });
@@ -1670,10 +1672,12 @@ function PanelThreePreview({
     }
 
     for (const item of itemsInPcbVisualOrder(items.filter((entry) => isGraphicItem(entry) && entry.stlMode !== "cutout"))) {
-      const placement = pcbThreeLayerPlacement(objectListLayer(item), settings.thicknessMm);
-      addThreeGraphic(group, item, layerColors, placement.zSurface, placement.outwardNormal, cutouts);
+      const previewLayers: GerberTargetLayer[] = item.stlMode === "reveal" ? ["frontReveal", "backReveal"] : [objectListLayer(item)];
+      for (const previewLayer of previewLayers) {
+        const placement = pcbThreeLayerPlacement(previewLayer, settings.thicknessMm);
+        addThreeGraphic(group, item, layerColors, placement.zSurface, placement.outwardNormal, cutouts);
+      }
     }
-
     for (const cutout of cutouts) {
       addThreeCutoutDepth(group, cutout, settings.thicknessMm, maxRelief);
       if (cutout.kind === "graphic") addThreeCutoutCue(group, cutout.shape, settings.thicknessMm + maxRelief + 0.12);
@@ -2561,7 +2565,7 @@ function stlModeForGerberLayer(gerberLayer: GerberTargetLayer, current?: StlGrap
 
 function gerberLayerForGraphicMode(mode: StlGraphicMode, current?: GerberTargetLayer): GerberTargetLayer {
   if (mode === "cutout") return "none";
-  if (mode === "reveal") return current === "backMask" || current === "backCopper" || current === "backSilk" || current === "backReveal" ? "backReveal" : "frontReveal";
+  if (mode === "reveal") return "frontReveal";
   return !current || current === "none" || current === "frontMask" || current === "backMask" || current === "frontReveal" || current === "backReveal" ? "frontSilk" : current;
 }
 
@@ -2575,13 +2579,13 @@ function isGraphicItem(item: PanelItem) {
 
 function objectListLayer(item: PanelItem): GerberTargetLayer {
   if (item.stlMode === "cutout") return "none";
-  if (item.stlMode === "reveal") return item.gerberLayer === "backReveal" ? "backReveal" : "frontReveal";
+  if (item.stlMode === "reveal") return "frontReveal";
   return isGraphicItem(item) ? (item.gerberLayer ?? "frontSilk") : "none";
 }
 
 function itemDisplayColor(item: PanelItem, layerColors: Record<GerberTargetLayer, string>) {
   if (item.stlMode === "cutout" || !isGraphicItem(item)) return layerColors.none;
-  if (item.stlMode === "reveal") return layerColors[item.gerberLayer === "backReveal" ? "backReveal" : "frontReveal"];
+  if (item.stlMode === "reveal") return layerColors.frontReveal;
   return layerColors[item.gerberLayer ?? "frontSilk"];
 }
 
@@ -3029,7 +3033,7 @@ async function traceSvgForFabrication(imageUrl: string) {
 
 async function upgradeSvgFabricationTrace(item: PanelItem): Promise<PanelItem> {
   if (item.kind !== "artwork" || !item.imageUrl?.startsWith("data:image/svg")) return item;
-  if (hasArtworkTrace(item) && (item.artworkTrace.detail ?? 0) >= FABRICATION_TRACE_DETAIL) return item;
+  if (hasArtworkTrace(item) && item.artworkTrace.version === ARTWORK_TRACE_VERSION && (item.artworkTrace.detail ?? 0) >= FABRICATION_TRACE_DETAIL) return item;
   const trace = await traceSvgForFabrication(item.imageUrl);
   if (!trace?.paths.length) return item;
   return {

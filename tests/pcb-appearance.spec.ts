@@ -124,7 +124,7 @@ test("places back artwork below the board and makes manufacturing fills opaque",
   await expect(page.locator('[data-gerber-layer="frontCopper"] .item-view.vector circle').first()).toHaveAttribute("fill-opacity", "1");
 });
 
-test("upgrades saved SVG artwork from legacy fabrication detail", async ({ page }) => {
+test("upgrades saved SVG artwork from the legacy trace algorithm", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 50"><path d="M 5 5 H 95 V 45 H 5 Z" fill="#111827"/></svg>`;
@@ -163,7 +163,7 @@ test("upgrades saved SVG artwork from legacy fabrication detail", async ({ page 
             gridWidth: 100,
             gridHeight: 50,
             threshold: 154,
-            detail: 512,
+            detail: 2048,
             mode: "alpha",
             paths: [[
               { x: -0.45, y: -0.4 },
@@ -192,4 +192,5 @@ test("upgrades saved SVG artwork from legacy fabrication detail", async ({ page 
   if (!path) throw new Error("No upgraded project download");
   const saved = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8"));
   expect(saved.items[0].artworkTrace.detail).toBe(2048);
+  expect(saved.items[0].artworkTrace.version).toBe(2);
 });
