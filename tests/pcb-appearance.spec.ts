@@ -48,7 +48,7 @@ test("selects a whole-board PCB colour and renders copper above silk", async ({ 
   if (!projectPath) throw new Error("No path for project export");
   const projectJson = await (await import("node:fs/promises")).readFile(projectPath, "utf8");
   expect(projectJson).toContain('"pcbColor": "#6d2e8a"');
-  expect(projectJson).toContain('"detail": 2048');
+  expect(projectJson).toContain('"detail": 4096');
 });
 
 test("places back artwork below the board and makes manufacturing fills opaque", async ({ page }) => {
@@ -163,7 +163,7 @@ test("upgrades saved SVG artwork from the legacy trace algorithm", async ({ page
             gridWidth: 100,
             gridHeight: 50,
             threshold: 154,
-            detail: 2048,
+            detail: 4096,
             mode: "alpha",
             paths: [[
               { x: -0.45, y: -0.4 },
@@ -191,6 +191,6 @@ test("upgrades saved SVG artwork from the legacy trace algorithm", async ({ page
   const path = await download.path();
   if (!path) throw new Error("No upgraded project download");
   const saved = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8"));
-  expect(saved.items[0].artworkTrace.detail).toBe(2048);
-  expect(saved.items[0].artworkTrace.version).toBe(2);
+  expect(saved.items[0].artworkTrace.detail).toBe(4096);
+  expect(saved.items[0].artworkTrace.version).toBe(3);
 });

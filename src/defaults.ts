@@ -6,6 +6,7 @@ export const DEFAULT_PANEL: PanelSettings = {
   heightMm: 128.5,
   thicknessMm: 2,
   mountHoleDiameter: 3.2,
+  mountHoleWidth: 5.08,
   mountHoleInsetX: 7.5,
   mountHoleInsetY: 3,
   showMountingHoles: true,

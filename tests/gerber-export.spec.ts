@@ -94,7 +94,9 @@ test("exports fabrication-ready SVG silk, PCB reveal, and drill files", async ({
   expect(drill).toMatch(/^METRIC$/m);
   expect(drill).not.toContain("METRIC,TZ");
   expect(drill).toContain("; #@! TF.FileFunction,NonPlated,1,2,NPTH");
-  expect(drill).toMatch(/^X\d+\.\d{3}Y\d+\.\d{3}$/m);
+  expect(drill).toMatch(/^G00X\d+\.\d{3}Y\d+\.\d{3}$/m);
+  expect(drill).toContain("M15");
+  expect(drill).toContain("M16");
 });
 
 test("preserves transparent holes while converting SVG artwork to smooth regions", async ({ page }) => {
@@ -126,5 +128,5 @@ test("preserves transparent holes while converting SVG artwork to smooth regions
   expect(trace.area).toBeGreaterThan(0.62);
   expect(trace.area).toBeLessThan(0.68);
   expect(trace.pathCount).toBeLessThan(20);
-  expect(trace.version).toBe(2);
+  expect(trace.version).toBe(3);
 });

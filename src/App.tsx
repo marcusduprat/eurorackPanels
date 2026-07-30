@@ -94,21 +94,21 @@ const gerberTargetOptions: Array<{ value: GerberTargetLayer; label: string }> = 
   { value: "none", label: "None" },
   { value: "frontMask", label: "Front mask opening" },
   { value: "frontSilk", label: "Front silk" },
-  { value: "frontCopper", label: "Front copper" },
+  { value: "frontCopper", label: "Front exposed copper" },
   { value: "frontReveal", label: "PCB reveal (front + back)" },
   { value: "backMask", label: "Back mask opening" },
   { value: "backSilk", label: "Back silk" },
-  { value: "backCopper", label: "Back copper" },
+  { value: "backCopper", label: "Back exposed copper" },
 ];
 
 const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; color: string }> = [
   { value: "none", label: "Cutouts / none", color: "#64748b" },
   { value: "frontMask", label: "Front mask opening", color: "#d6b56c" },
-  { value: "frontCopper", label: "Front copper", color: "#c47a32" },
+  { value: "frontCopper", label: "Front exposed copper", color: "#c47a32" },
   { value: "frontSilk", label: "Front silk", color: "#f8fafc" },
   { value: "frontReveal", label: "PCB reveal (front + back)", color: "#d6b56c" },
   { value: "backMask", label: "Back mask opening", color: "#c6a45d" },
-  { value: "backCopper", label: "Back copper", color: "#b86f2c" },
+  { value: "backCopper", label: "Back exposed copper", color: "#b86f2c" },
   { value: "backSilk", label: "Back silk", color: "#e2e8f0" },
 ];
 
@@ -927,6 +927,7 @@ function App() {
             imageUrl: layer.imageUrl,
             fileName: file.name,
             artworkTrace: trace ?? undefined,
+            artworkEmbeddedRasterCount: layer.embeddedRasterCount,
             filled: Boolean(trace?.paths.length),
             opacity: 1,
             ...graphicDefaults(defaultGraphicLayer),
@@ -1386,7 +1387,7 @@ function App() {
                 {settings.showMountingHoles &&
                   panelHoles(settings, []).map((hole) => (
                     <g key={`${hole.x}-${hole.y}`} className="mount-hole">
-                      <circle cx={hole.x} cy={hole.y} r={hole.diameter / 2} fill="#f8fafc" stroke="#64748b" strokeWidth="0.18" strokeDasharray="0.9 0.55" />
+                      <rect x={hole.x - (hole.slotWidth ?? hole.diameter) / 2} y={hole.y - hole.diameter / 2} width={hole.slotWidth ?? hole.diameter} height={hole.diameter} rx={hole.diameter / 2} fill="#f8fafc" stroke="#64748b" strokeWidth="0.18" strokeDasharray="0.9 0.55" />
                       <line x1={hole.x - 2.5} y1={hole.y} x2={hole.x + 2.5} y2={hole.y} stroke="#64748b" strokeWidth="0.12" />
                       <line x1={hole.x} y1={hole.y - 2.5} x2={hole.x} y2={hole.y + 2.5} stroke="#64748b" strokeWidth="0.12" />
                     </g>
@@ -1482,6 +1483,7 @@ function PanelInspector({
         Mount holes
       </label>
       <NumberField label="Mount dia" value={settings.mountHoleDiameter} step={0.1} min={0.5} onChange={(mountHoleDiameter) => updatePanel({ mountHoleDiameter })} suffix="mm" />
+      <NumberField label="Mount width" value={settings.mountHoleWidth ?? DEFAULT_PANEL.mountHoleWidth ?? settings.mountHoleDiameter} step={0.1} min={settings.mountHoleDiameter} onChange={(mountHoleWidth) => updatePanel({ mountHoleWidth })} suffix="mm" />
       <NumberField label="Mount X" value={settings.mountHoleInsetX} step={0.1} min={0} onChange={(mountHoleInsetX) => updatePanel({ mountHoleInsetX })} suffix="mm" />
       <NumberField label="Mount Y" value={settings.mountHoleInsetY} step={0.1} min={0} onChange={(mountHoleInsetY) => updatePanel({ mountHoleInsetY })} suffix="mm" />
       <label className="toggle-row">
@@ -1872,6 +1874,7 @@ function ItemInspector({
               </button>
             </>
           )}
+          {Boolean(item.artworkEmbeddedRasterCount) && <div className="trace-summary muted">This SVG contains {item.artworkEmbeddedRasterCount} embedded bitmap image{item.artworkEmbeddedRasterCount === 1 ? "" : "s"}. Tracing smooths the edges, but only vector paths can retain unlimited detail.</div>}
           {hasArtworkTrace(item) && (
             <div className="trace-summary">
               Vector trace - {item.artworkTrace!.paths.length} shapes - {traceModeLabel(traceMode)} - {item.artworkTrace!.gridWidth}x{item.artworkTrace!.gridHeight}
@@ -2675,7 +2678,7 @@ function createPanelThreeShape(settings: PanelSettings, cutouts: ThreeCutoutShap
 
 function threeCutoutShapes(settings: PanelSettings, items: PanelItem[]): ThreeCutoutShape[] {
   const physical: ThreeCutoutShape[] = panelHoles(settings, items).map((hole) => ({
-    shape: circleThreeShape(hole.x, hole.y, hole.diameter / 2, true),
+    shape: capsuleThreeShape(hole.x, hole.y, hole.slotWidth ?? hole.diameter, hole.diameter),
     kind: "physical",
   }));
 
@@ -2880,6 +2883,21 @@ function addThreeCutoutCue(group: THREE.Group, shape: THREE.Shape, z: number) {
   group.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: "#f8fafc", linewidth: 2, transparent: true, opacity: 0.85 })));
 }
 
+function capsuleThreeShape(x: number, y: number, width: number, height: number) {
+  const radius = height / 2;
+  const travel = Math.max(width - height, 0) / 2;
+  if (travel <= 0) return circleThreeShape(x, y, radius, true);
+  const points: Point2D[] = [];
+  for (let index = 0; index < 24; index += 1) {
+    const angle = -Math.PI / 2 + (Math.PI * index) / 23;
+    points.push({ x: x + travel + Math.cos(angle) * radius, y: y + Math.sin(angle) * radius });
+  }
+  for (let index = 0; index < 24; index += 1) {
+    const angle = Math.PI / 2 + (Math.PI * index) / 23;
+    points.push({ x: x - travel + Math.cos(angle) * radius, y: y + Math.sin(angle) * radius });
+  }
+  return shapeFromPoints(points, true);
+}
 function circleThreeShape(x: number, y: number, radius: number, clockwise: boolean) {
   const shape = new THREE.Shape();
   shape.absarc(x, y, Math.max(radius, 0.01), 0, Math.PI * 2, clockwise);

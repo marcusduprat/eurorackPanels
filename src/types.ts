@@ -42,6 +42,7 @@ export type PanelItem = {
   imageUrl?: string;
   fileName?: string;
   artworkTrace?: ArtworkTrace;
+  artworkEmbeddedRasterCount?: number;
   editorVisible?: boolean;
   locked?: boolean;
   opacity?: number;
@@ -106,6 +107,7 @@ export type PanelSettings = {
   heightMm: number;
   thicknessMm: number;
   mountHoleDiameter: number;
+  mountHoleWidth?: number;
   mountHoleInsetX: number;
   mountHoleInsetY: number;
   showMountingHoles: boolean;

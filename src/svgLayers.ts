@@ -2,6 +2,7 @@ export type SvgArtworkLayer = {
   name: string;
   imageUrl: string;
   aspectRatio: number;
+  embeddedRasterCount: number;
 };
 
 export function svgArtworkLayers(source: string, fileName: string): SvgArtworkLayer[] {
@@ -9,7 +10,7 @@ export function svgArtworkLayers(source: string, fileName: string): SvgArtworkLa
   const document = new DOMParser().parseFromString(source, "image/svg+xml");
   const root = document.documentElement;
   if (root.localName !== "svg" || document.querySelector("parsererror")) {
-    return [{ name: baseName, imageUrl: svgDataUrl(source), aspectRatio: 1 }];
+    return [{ name: baseName, imageUrl: svgDataUrl(source), aspectRatio: 1, embeddedRasterCount: 0 }];
   }
 
   const rootChildren = Array.from(root.children);
@@ -19,7 +20,7 @@ export function svgArtworkLayers(source: string, fileName: string): SvgArtworkLa
   const aspectRatio = svgAspectRatio(root);
 
   if (!layerGroups.length) {
-    return [{ name: baseName, imageUrl: svgDataUrl(source), aspectRatio }];
+    return [{ name: baseName, imageUrl: svgDataUrl(source), aspectRatio, embeddedRasterCount: root.querySelectorAll("image").length }];
   }
 
   const layerIndexes = new Set(layerGroups.map((layer) => rootChildren.indexOf(layer)));
@@ -43,6 +44,7 @@ export function svgArtworkLayers(source: string, fileName: string): SvgArtworkLa
       name: `${baseName} / ${svgLayerName(layer) ?? `Layer ${targetIndex + 1}`}`,
       imageUrl: svgDataUrl(serialized),
       aspectRatio,
+      embeddedRasterCount: isolatedRoot.querySelectorAll("image").length,
     };
   });
 }

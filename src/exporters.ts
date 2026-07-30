@@ -6,6 +6,7 @@ type Hole = {
   x: number;
   y: number;
   diameter: number;
+  slotWidth?: number;
   label: string;
 };
 
@@ -270,7 +271,7 @@ export function downloadBlob(fileName: string, blob: Blob) {
 }
 
 export function panelHoles(settings: PanelSettings, items: PanelItem[]): Hole[] {
-  const holes = items
+  const holes: Hole[] = items
     .filter((item) => (item.kind === "pot" || item.kind === "jack" || item.kind === "hole") && item.diameter)
     .map((item) => ({
       x: item.x,
@@ -285,10 +286,10 @@ export function panelHoles(settings: PanelSettings, items: PanelItem[]): Hole[] 
     const y1 = settings.mountHoleInsetY;
     const y2 = settings.heightMm - settings.mountHoleInsetY;
     holes.push(
-      { x: x1, y: y1, diameter: settings.mountHoleDiameter, label: "Mount TL" },
-      { x: x2, y: y1, diameter: settings.mountHoleDiameter, label: "Mount TR" },
-      { x: x1, y: y2, diameter: settings.mountHoleDiameter, label: "Mount BL" },
-      { x: x2, y: y2, diameter: settings.mountHoleDiameter, label: "Mount BR" },
+      { x: x1, y: y1, diameter: settings.mountHoleDiameter, slotWidth: Math.max(settings.mountHoleWidth ?? settings.mountHoleDiameter, settings.mountHoleDiameter), label: "Mount TL" },
+      { x: x2, y: y1, diameter: settings.mountHoleDiameter, slotWidth: Math.max(settings.mountHoleWidth ?? settings.mountHoleDiameter, settings.mountHoleDiameter), label: "Mount TR" },
+      { x: x1, y: y2, diameter: settings.mountHoleDiameter, slotWidth: Math.max(settings.mountHoleWidth ?? settings.mountHoleDiameter, settings.mountHoleDiameter), label: "Mount BL" },
+      { x: x2, y: y2, diameter: settings.mountHoleDiameter, slotWidth: Math.max(settings.mountHoleWidth ?? settings.mountHoleDiameter, settings.mountHoleDiameter), label: "Mount BR" },
     );
   }
 
@@ -337,7 +338,7 @@ export function createSvg(settings: PanelSettings, items: PanelItem[]) {
   const holeTags = holes
     .map(
       (hole) =>
-        `<circle cx="${round(hole.x)}" cy="${round(hole.y)}" r="${round(hole.diameter / 2)}" fill="none" stroke="#111827" stroke-width="0.18" />`,
+        `<rect x="${round(hole.x - (hole.slotWidth ?? hole.diameter) / 2)}" y="${round(hole.y - hole.diameter / 2)}" width="${round(hole.slotWidth ?? hole.diameter)}" height="${round(hole.diameter)}" rx="${round(hole.diameter / 2)}" fill="none" stroke="#111827" stroke-width="0.18" />`,
     )
     .join("\n  ");
 
@@ -361,7 +362,8 @@ export function createDxf(settings: PanelSettings, items: PanelItem[]) {
   addDxfLine(entities, settings.widthMm, settings.heightMm, 0, settings.heightMm);
   addDxfLine(entities, 0, settings.heightMm, 0, 0);
   for (const hole of holes) {
-    addDxfCircle(entities, hole.x, hole.y, hole.diameter / 2);
+    if ((hole.slotWidth ?? hole.diameter) > hole.diameter) addDxfLoop(entities, capsuleLoop2(hole.x, hole.y, hole.slotWidth ?? hole.diameter, hole.diameter, 24), true);
+    else addDxfCircle(entities, hole.x, hole.y, hole.diameter / 2);
   }
   for (const item of items.filter((entry) => entry.kind === "text" && entry.text)) {
     addDxfText(entities, item.x, item.y, item.fontSize ?? 4, item.rotation ?? 0, item.text ?? "");
@@ -403,7 +405,7 @@ M02*
 
 export function createGerberGraphicLayer(settings: PanelSettings, items: PanelItem[], layer: GerberGraphicLayer) {
   const darkItems = items.filter((item) => itemDrawsOnGerberLayer(item, layer));
-  const clearItems = items.filter((item) => revealClearsLayer(item, layer));
+  const clearItems = items.filter((item) => itemClearsGerberLayer(item, layer));
   const body = gerberGeometryBody(darkItems, settings);
   const clearBody = gerberGeometryBody(clearItems, settings);
 
@@ -461,10 +463,15 @@ function itemDrawsOnGerberLayer(item: PanelItem, layer: GerberGraphicLayer) {
   if (item.stlMode === "reveal" || target === "frontReveal" || target === "backReveal") {
     return layer === "frontMask" || layer === "backMask";
   }
+  if (target === "frontCopper" && layer === "frontMask") return true;
+  if (target === "backCopper" && layer === "backMask") return true;
   return target === layer;
 }
 
-function revealClearsLayer(item: PanelItem, layer: GerberGraphicLayer) {
+function itemClearsGerberLayer(item: PanelItem, layer: GerberGraphicLayer) {
+  const target = item.gerberLayer ?? defaultGerberLayer(item);
+  if (target === "frontCopper" && layer === "frontSilk") return true;
+  if (target === "backCopper" && layer === "backSilk") return true;
   if (item.stlMode !== "reveal") return false;
   return layer === "frontCopper" || layer === "frontSilk" || layer === "backCopper" || layer === "backSilk";
 }
@@ -493,7 +500,17 @@ export function createDrill(settings: PanelSettings, items: PanelItem[]) {
   sizes.forEach((size, index) => {
     body.push(`T${String(index + 1).padStart(2, "0")}`);
     for (const hole of groups.get(size) ?? []) {
-      body.push(`X${drill(hole.x)}Y${drill(boardY(hole.y, settings.heightMm))}`);
+      const slotTravel = Math.max((hole.slotWidth ?? hole.diameter) - hole.diameter, 0);
+      const y = drill(boardY(hole.y, settings.heightMm));
+      if (slotTravel > 0.0005) {
+        body.push(`G00X${drill(hole.x - slotTravel / 2)}Y${y}`);
+        body.push("M15");
+        body.push(`G01X${drill(hole.x + slotTravel / 2)}Y${y}`);
+        body.push("M16");
+        body.push("G05");
+      } else {
+        body.push(`X${drill(hole.x)}Y${y}`);
+      }
     }
   });
 
@@ -511,7 +528,7 @@ export function createStl(settings: PanelSettings, items: PanelItem[]) {
     [0, settings.heightMm],
   ];
   const holeLoops: Point2[][] = [
-    ...holes.map((hole) => circleLoop2(hole.x, hole.y, hole.diameter / 2, 48).reverse()),
+    ...holes.map((hole) => capsuleLoop2(hole.x, hole.y, hole.slotWidth ?? hole.diameter, hole.diameter, 24).reverse()),
     ...items.flatMap((item) => stlCutoutLoopsForItem(item, settings)),
   ];
   const flat: number[] = [];
@@ -849,6 +866,21 @@ function strokeLoop(start: Point2, end: Point2, width: number): Point2[] {
   ];
 }
 
+function capsuleLoop2(x: number, y: number, width: number, height: number, arcSegments: number): Point2[] {
+  const radius = height / 2;
+  const travel = Math.max(width - height, 0) / 2;
+  if (travel <= 0) return circleLoop2(x, y, radius, arcSegments * 2);
+  const points: Point2[] = [];
+  for (let index = 0; index <= arcSegments; index += 1) {
+    const angle = -Math.PI / 2 + (Math.PI * index) / arcSegments;
+    points.push([x + travel + Math.cos(angle) * radius, y + Math.sin(angle) * radius]);
+  }
+  for (let index = 0; index <= arcSegments; index += 1) {
+    const angle = Math.PI / 2 + (Math.PI * index) / arcSegments;
+    points.push([x - travel + Math.cos(angle) * radius, y + Math.sin(angle) * radius]);
+  }
+  return points;
+}
 function circleLoop2(x: number, y: number, radius: number, segments: number): Point2[] {
   return circleLoop(x, y, radius, segments).map((point) => [point[0], point[1]]);
 }

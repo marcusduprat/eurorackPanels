@@ -115,6 +115,22 @@ const orientedDrill = createDrill(DEFAULT_PANEL, [
   },
 ]);
 
+const exposedCopperItems = [
+  {
+    id: "exposed-copper",
+    kind: "vector-rect" as const,
+    label: "Exposed copper",
+    x: 18,
+    y: 24,
+    width: 8,
+    height: 5,
+    filled: true,
+    gerberLayer: "frontCopper" as const,
+  },
+];
+const exposedCopper = createGerberGraphicLayer(DEFAULT_PANEL, exposedCopperItems, "frontCopper");
+const exposedCopperMask = createGerberGraphicLayer(DEFAULT_PANEL, exposedCopperItems, "frontMask");
+const exposedCopperSilk = createGerberGraphicLayer(DEFAULT_PANEL, exposedCopperItems, "frontSilk");
 const untracedArtworkGerber = createGerberGraphicLayer(
   DEFAULT_PANEL,
   [
@@ -134,7 +150,7 @@ const untracedArtworkGerber = createGerberGraphicLayer(
   "frontSilk",
 );
 
-assert(svg.includes("<svg") && svg.includes("<circle"), "SVG export missing expected geometry");
+assert(svg.includes("<svg") && svg.includes("<rect"), "SVG export missing expected geometry");
 assert(dxf.includes("SECTION") && dxf.includes("CIRCLE"), "DXF export missing expected geometry");
 assert(gerber.includes("%MOMM*%") && gerber.includes("M02*"), "Gerber outline export missing expected format");
 assert(frontSilk.includes("D01*") && parseGerber(frontSilk).length > 0, "Gerber graphic export missing expected strokes");
@@ -164,6 +180,11 @@ assert(!untracedArtworkGerber.includes("D01*") && !untracedArtworkGerber.include
 assert(tracedStl.includes("facet normal") && !tracedStl.includes("NaN"), "Traced artwork STL export produced invalid geometry");
 assert(orientedGraphic.includes("X10000000Y111500000D02*") && orientedGraphic.includes("Y105500000"), "Gerber graphics must convert top-down editor Y coordinates to bottom-up board coordinates");
 assert(orientedDrill.includes("X12.000Y108.500"), "Drill coordinates must use the same bottom-up board orientation as Gerber graphics");
+assert(exposedCopper.includes("G36*"), "Exposed copper artwork must be present on the copper layer");
+assert(exposedCopperMask.includes("G36*"), "Exposed copper artwork must create a matching soldermask opening");
+assert(exposedCopperSilk.includes("%LPC*%") && exposedCopperSilk.includes("G36*"), "Exposed copper artwork must clear overlapping silkscreen");
+assert(DEFAULT_PANEL.mountHoleWidth === 5.08, "Default mounting slot must be one HP wide");
+assert(drill.includes("M15") && drill.includes("G01") && drill.includes("M16"), "Mounting holes must export as routed horizontal slots");
 
 const parsedGerber = parseGerber(`%FSLAX46Y46*%
 %MOMM*%
@@ -183,6 +204,18 @@ T01
 X010000Y020000
 M30`);
 assert(parsedDrill.length === 1 && parsedDrill[0].type === "circle", "Drill parser did not read a hole");
+const parsedSlot = parseExcellon(`M48
+METRIC
+T01C3.200
+%
+T01
+G00X5.000Y10.000
+M15
+G01X6.880Y10.000
+M16
+G05
+M30`);
+assert(parsedSlot.length === 1 && parsedSlot[0].type === "line" && parsedSlot[0].stroke === 3.2, "Drill parser did not read a routed slot");
 
 console.log("export verification ok");
 

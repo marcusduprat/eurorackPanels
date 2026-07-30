@@ -140,40 +140,31 @@ export function parseExcellon(text: string): GerberPrimitive[] {
   let unitFactor = 1;
   let x = 0;
   let y = 0;
-
+  let routing = false;
   for (const rawLine of text.replace(/\r/g, "").split("\n")) {
     const line = rawLine.trim();
     if (!line || line.startsWith(";")) continue;
-
     if (/INCH/i.test(line)) unitFactor = 25.4;
     if (/METRIC/i.test(line)) unitFactor = 1;
-
     const toolDef = line.match(/^T(\d+)C([0-9.]+)/i);
-    if (toolDef) {
-      tools.set(toolDef[1], Number(toolDef[2]) * unitFactor);
-      continue;
-    }
-
+    if (toolDef) { tools.set(toolDef[1], Number(toolDef[2]) * unitFactor); continue; }
     const toolSelect = line.match(/^T(\d+)$/i);
-    if (toolSelect) {
-      currentTool = toolSelect[1];
-      continue;
-    }
-
+    if (toolSelect) { currentTool = toolSelect[1]; continue; }
+    if (/^M15$/i.test(line)) { routing = true; continue; }
+    if (/^M16$/i.test(line)) { routing = false; continue; }
     if (!/[XY]/i.test(line)) continue;
-
+    const previousX = x;
+    const previousY = y;
     const xMatch = line.match(/X([+-]?\d*\.?\d+)/i);
     const yMatch = line.match(/Y([+-]?\d*\.?\d+)/i);
     if (xMatch) x = parseDrillCoord(xMatch[1], unitFactor);
     if (yMatch) y = -parseDrillCoord(yMatch[1], unitFactor);
-
     const diameter = tools.get(currentTool) ?? 1;
-    primitives.push({ type: "circle", x, y, r: diameter / 2 });
+    if (routing && /^G0?1/i.test(line)) primitives.push({ type: "line", x1: previousX, y1: previousY, x2: x, y2: y, stroke: diameter });
+    else if (!/^G0?0/i.test(line)) primitives.push({ type: "circle", x, y, r: diameter / 2 });
   }
-
   return primitives;
 }
-
 export function parseDxf(text: string): GerberPrimitive[] {
   const lines = text.replace(/\r/g, "").split("\n");
   const pairs: Array<[string, string]> = [];
