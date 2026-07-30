@@ -131,6 +131,10 @@ const exposedCopperItems = [
 const exposedCopper = createGerberGraphicLayer(DEFAULT_PANEL, exposedCopperItems, "frontCopper");
 const exposedCopperMask = createGerberGraphicLayer(DEFAULT_PANEL, exposedCopperItems, "frontMask");
 const exposedCopperSilk = createGerberGraphicLayer(DEFAULT_PANEL, exposedCopperItems, "frontSilk");
+const coveredCopperItems = exposedCopperItems.map((item) => ({ ...item, id: "covered-copper", gerberLayer: "frontCopperCovered" as const }));
+const coveredCopper = createGerberGraphicLayer(DEFAULT_PANEL, coveredCopperItems, "frontCopper");
+const coveredCopperMask = createGerberGraphicLayer(DEFAULT_PANEL, coveredCopperItems, "frontMask");
+const coveredCopperSilk = createGerberGraphicLayer(DEFAULT_PANEL, coveredCopperItems, "frontSilk");
 const untracedArtworkGerber = createGerberGraphicLayer(
   DEFAULT_PANEL,
   [
@@ -183,6 +187,9 @@ assert(orientedDrill.includes("X12.000Y108.500"), "Drill coordinates must use th
 assert(exposedCopper.includes("G36*"), "Exposed copper artwork must be present on the copper layer");
 assert(exposedCopperMask.includes("G36*"), "Exposed copper artwork must create a matching soldermask opening");
 assert(exposedCopperSilk.includes("%LPC*%") && exposedCopperSilk.includes("G36*"), "Exposed copper artwork must clear overlapping silkscreen");
+assert(coveredCopper.includes("G36*"), "Covered copper artwork must be present on the copper layer");
+assert(!coveredCopperMask.includes("G36*"), "Covered copper artwork must stay beneath soldermask");
+assert(!coveredCopperSilk.includes("%LPC*%"), "Covered copper artwork must not clear overlapping silkscreen");
 assert(DEFAULT_PANEL.mountHoleWidth === 5.08, "Default mounting slot must be one HP wide");
 assert(drill.includes("M15") && drill.includes("G01") && drill.includes("M16"), "Mounting holes must export as routed horizontal slots");
 

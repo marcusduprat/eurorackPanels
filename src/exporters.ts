@@ -12,7 +12,7 @@ type Hole = {
 
 type Point3 = [number, number, number];
 type Point2 = [number, number];
-type GerberGraphicLayer = Exclude<GerberTargetLayer, "none" | "frontReveal" | "backReveal">;
+type GerberGraphicLayer = Exclude<GerberTargetLayer, "none" | "frontReveal" | "backReveal" | "frontCopperCovered" | "backCopperCovered">;
 
 const MM_TO_GERBER = 1_000_000;
 const DEFAULT_GRAPHIC_STROKE = 0.22;
@@ -463,6 +463,8 @@ function itemDrawsOnGerberLayer(item: PanelItem, layer: GerberGraphicLayer) {
   if (item.stlMode === "reveal" || target === "frontReveal" || target === "backReveal") {
     return layer === "frontMask" || layer === "backMask";
   }
+  if (target === "frontCopperCovered") return layer === "frontCopper";
+  if (target === "backCopperCovered") return layer === "backCopper";
   if (target === "frontCopper" && layer === "frontMask") return true;
   if (target === "backCopper" && layer === "backMask") return true;
   return target === layer;

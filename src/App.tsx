@@ -95,20 +95,24 @@ const gerberTargetOptions: Array<{ value: GerberTargetLayer; label: string }> = 
   { value: "frontMask", label: "Front mask opening" },
   { value: "frontSilk", label: "Front silk" },
   { value: "frontCopper", label: "Front exposed copper" },
+  { value: "frontCopperCovered", label: "Front covered copper texture" },
   { value: "frontReveal", label: "PCB reveal (front + back)" },
   { value: "backMask", label: "Back mask opening" },
   { value: "backSilk", label: "Back silk" },
   { value: "backCopper", label: "Back exposed copper" },
+  { value: "backCopperCovered", label: "Back covered copper texture" },
 ];
 
 const objectLayerSections: Array<{ value: GerberTargetLayer; label: string; color: string }> = [
   { value: "none", label: "Cutouts / none", color: "#64748b" },
   { value: "frontMask", label: "Front mask opening", color: "#d6b56c" },
   { value: "frontCopper", label: "Front exposed copper", color: "#c47a32" },
+  { value: "frontCopperCovered", label: "Front covered copper texture", color: "#8f633b" },
   { value: "frontSilk", label: "Front silk", color: "#f8fafc" },
   { value: "frontReveal", label: "PCB reveal (front + back)", color: "#d6b56c" },
   { value: "backMask", label: "Back mask opening", color: "#c6a45d" },
   { value: "backCopper", label: "Back exposed copper", color: "#b86f2c" },
+  { value: "backCopperCovered", label: "Back covered copper texture", color: "#815936" },
   { value: "backSilk", label: "Back silk", color: "#e2e8f0" },
 ];
 
@@ -118,10 +122,12 @@ const defaultObjectLayerColors = {
 } as Record<GerberTargetLayer, string>;
 
 const pcbVisualLayerOrder: Record<GerberTargetLayer, number> = {
+  backCopperCovered: 5,
   backMask: 10,
   backSilk: 20,
   backCopper: 30,
   backReveal: 40,
+  frontCopperCovered: 45,
   frontMask: 50,
   frontSilk: 60,
   frontCopper: 70,
@@ -130,6 +136,8 @@ const pcbVisualLayerOrder: Record<GerberTargetLayer, number> = {
 };
 const PCB_VISUAL_LAYER_STEP_MM = 0.002;
 const pcbSurfaceLayerOrder: Record<GerberTargetLayer, number> = {
+  frontCopperCovered: 0,
+  backCopperCovered: 0,
   frontMask: 1,
   backMask: 1,
   frontSilk: 2,

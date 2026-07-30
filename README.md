@@ -17,7 +17,7 @@ Open `http://127.0.0.1:5173`.
 - Import PCB Gerbers, Excellon drill files, and DXF drawings as translucent alignment layers.
 - Import Gerber ZIP bundles directly.
 - Import PNG, JPG, and WebP artwork; named top-level SVG layers import as separate, aligned panel objects with smooth 4096-detail fabrication contours. Older saved SVG traces rebuild automatically, and mixed SVG/bitmap files show a source-resolution warning.
-- Preview the whole board in standard PCB colours with mask, silk, copper, and two-sided PCB reveal objects rendered in manufacturing order. Exposed-copper artwork automatically opens soldermask and clears overlapping silkscreen.
+- Preview the whole board in standard PCB colours with mask, silk, copper, and two-sided PCB reveal objects rendered in manufacturing order. Exposed-copper artwork automatically opens soldermask and clears overlapping silkscreen; covered-copper artwork stays beneath the soldermask for subtle PCB texture.
 - Tint imported SVG artwork with its object-layer color, and lock or hide objects while arranging overlaps.
 - Place and edit pots, jacks, holes, labels, and artwork in millimeters.
 - Load, search, and use fonts installed on the computer in desktop Chrome or Edge; Gerber export converts selected text to high-detail filled geometry.
