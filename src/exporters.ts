@@ -656,7 +656,7 @@ function gerberSegmentsForItem(item: PanelItem): Array<[Point2, Point2]> {
   }
 
   if (item.kind === "artwork") {
-    return hasArtworkTrace(item) ? artworkTraceLoops(item).flatMap((loop) => loopSegments(loop, true)) : [];
+    return [];
   }
 
   if (item.kind === "vector-circle") {
