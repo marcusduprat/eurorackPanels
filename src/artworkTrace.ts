@@ -6,7 +6,8 @@ const TRACE_THRESHOLD = 154;
 const TRACE_ALPHA_THRESHOLD = 32;
 const TRACE_MIN_DETAIL = 32;
 export const FABRICATION_TRACE_DETAIL = 4096;
-export const ARTWORK_TRACE_VERSION = 3;
+export const ARTWORK_TRACE_VERSION = 4;
+const FABRICATION_SIMPLIFY_TOLERANCE = 0.5;
 const TRACE_MAX_DETAIL = FABRICATION_TRACE_DETAIL;
 
 export type TraceImageOptions = {
@@ -105,7 +106,10 @@ export function artworkTracePathsForItem(item: PanelItem): VectorPoint[][] {
 }
 
 function maskToVectorPaths(mask: Uint8Array, width: number, height: number): VectorPoint[][] {
-  const simplifyTolerance = Math.max(0.35, Math.min(2, Math.max(width, height) / 1024));
+  const simplifyTolerance =
+    Math.max(width, height) >= FABRICATION_TRACE_DETAIL
+      ? FABRICATION_SIMPLIFY_TOLERANCE
+      : Math.max(0.35, Math.min(2, Math.max(width, height) / 1024));
   const contours = boundaryContours(mask, width, height)
     .map((points) => simplifyClosedPath(points, simplifyTolerance))
     .filter((points) => points.length >= 3);

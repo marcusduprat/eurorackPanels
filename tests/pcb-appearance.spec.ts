@@ -192,5 +192,5 @@ test("upgrades saved SVG artwork from the legacy trace algorithm", async ({ page
   if (!path) throw new Error("No upgraded project download");
   const saved = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8"));
   expect(saved.items[0].artworkTrace.detail).toBe(4096);
-  expect(saved.items[0].artworkTrace.version).toBe(3);
+  expect(saved.items[0].artworkTrace.version).toBe(4);
 });
