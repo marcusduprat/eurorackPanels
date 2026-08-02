@@ -128,5 +128,22 @@ test("preserves transparent holes while converting SVG artwork to smooth regions
   expect(trace.area).toBeGreaterThan(0.62);
   expect(trace.area).toBeLessThan(0.68);
   expect(trace.pathCount).toBeLessThan(20);
-  expect(trace.version).toBe(3);
+  expect(trace.version).toBe(4);
+});
+
+test("retains fine curved contours at fabrication trace detail", async ({ page }) => {
+  await page.goto("/");
+  const trace = await page.evaluate(async () => {
+    const { FABRICATION_TRACE_DETAIL, traceImageToArtwork } = await import("/src/artworkTrace.ts");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="8" fill="#111827"/></svg>`;
+    return traceImageToArtwork(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, {
+      mode: "alpha",
+      detail: FABRICATION_TRACE_DETAIL,
+      allowUpscale: true,
+    });
+  });
+
+  expect(trace.gridWidth).toBe(4096);
+  expect(trace.paths).toHaveLength(1);
+  expect(trace.paths[0].length).toBeGreaterThanOrEqual(48);
 });

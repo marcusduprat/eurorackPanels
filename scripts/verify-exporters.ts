@@ -179,7 +179,8 @@ assert(revealBackBase.includes("%TF.FileFunction,Soldermask,Bot*%") && revealBac
 assert(revealBackCopper.includes("%LPC*%") && revealBackCopper.includes("G36*"), "Back PCB reveal should clear a solid region from back copper");
 assert(revealBackSilk.includes("%LPC*%") && revealBackSilk.includes("G36*"), "Back PCB reveal should clear a solid region from back silk");
 assert(tracedSvg.includes("<path") && !tracedSvg.includes("<image"), "Traced artwork SVG export should use vectors");
-assert(parseGerber(tracedGerber).length > 0, "Traced artwork Gerber export missing vector strokes");
+assert(parseGerber(tracedGerber).length > 0, "Traced artwork Gerber export missing vector geometry");
+assert((tracedGerber.match(/D02\*/g) ?? []).length === (tracedGerber.match(/G36\*/g) ?? []).length, "Filled traced artwork must export as regions without redundant perimeter strokes");
 assert(!untracedArtworkGerber.includes("D01*") && !untracedArtworkGerber.includes("G36*"), "Untraced artwork must not export its rectangular bounds to Gerber");
 assert(tracedStl.includes("facet normal") && !tracedStl.includes("NaN"), "Traced artwork STL export produced invalid geometry");
 assert(orientedGraphic.includes("X10000000Y111500000D02*") && orientedGraphic.includes("Y105500000"), "Gerber graphics must convert top-down editor Y coordinates to bottom-up board coordinates");
